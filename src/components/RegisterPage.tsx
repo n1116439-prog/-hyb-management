@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Check, ChevronRight, User, Phone, Mail, Calendar, Info, Users, Clock, MapPin, AlertCircle, ArrowLeft, DollarSign } from 'lucide-react';
 import { RegistrationData, Course, Participant } from '../types';
-// import { COURSES } from '../constants';  // 不再使用 hardcode 資料
+import { supabase } from '../lib/supabase';
 import { Button, FormField, Input, Select, Badge } from './UI';
 
 const PLANS = {
@@ -35,15 +35,83 @@ export const RegisterPage: React.FC<{ initialCourseId?: string; onComplete: () =
     injuryDetail: '',
     source: '朋友介紹',
     type: 'trial',
-    category: initialCourseId ? (COURSES.find(c => c.id === initialCourseId)?.category || 'children') : 'children',
+    category: 'children',
     planId: 'trial',
     count: 1,
     participants: [{ name: '', gender: '男', birthday: '' }],
-    location: initialCourseId ? (COURSES.find(c => c.id === initialCourseId)?.location || '') : '',
+    location: '',
     courseId: initialCourseId || '',
     trialDate: '',
     note: ''
   });
+
+  const [courses, setCourses] = useState<Course[]>([]);
+  const [loadingCourses, setLoadingCourses] = useState(true);
+
+  useEffect(() => {
+    const fetchCourses = async () => {
+      setLoadingCourses(true);
+      const { data, error } = await supabase
+        .from('courses')
+        .select('*, coaches(name), venues(name, address)')
+        .order('name');
+
+      if (error) {
+        console.error('Error fetching courses:', error);
+        setLoadingCourses(false);
+        return;
+      }
+
+      if (data) {
+        const mapped: Course[] = data.map((row: any) => {
+          const category: 'children' | 'adult' = row.category === '兒童班' ? 'children' : 'adult';
+          const startTime = row.start_time?.slice(0, 5) ?? '';
+          const endTime = row.end_time?.slice(0, 5) ?? '';
+          const time = startTime && endTime ? `${startTime} – ${endTime}` : '';
+          const location = row.venues?.name ?? '';
+          const coaches: string[] = Array.isArray(row.coaches)
+            ? row.coaches.map((c: any) => c.name)
+            : row.coaches?.name ? [row.coaches.name] : [];
+          const thumbnail = `https://picsum.photos/seed/${row.id}/200/200`;
+
+          return {
+            id: String(row.id),
+            name: row.name,
+            category,
+            schedule: row.day_of_week ?? '',
+            time,
+            location,
+            coaches,
+            thumbnail,
+            currentEnrollment: row.current_students ?? 0,
+            maxEnrollment: row.max_students ?? 0,
+            price: row.price ?? 0,
+            description: row.description ?? '',
+            tags: [],
+          };
+        });
+        setCourses(mapped);
+      }
+      setLoadingCourses(false);
+    };
+
+    fetchCourses();
+  }, []);
+
+  // 當課程資料載入完成且有 initialCourseId 時，自動填入課程相關欄位
+  useEffect(() => {
+    if (initialCourseId && courses.length > 0) {
+      const course = courses.find(c => c.id === initialCourseId);
+      if (course) {
+        setFormData(prev => ({
+          ...prev,
+          category: course.category,
+          location: course.location,
+          courseId: initialCourseId,
+        }));
+      }
+    }
+  }, [initialCourseId, courses]);
 
   const updateParticipant = (index: number, field: keyof Participant, value: string) => {
     const newParticipants = [...formData.participants];
@@ -63,7 +131,7 @@ export const RegisterPage: React.FC<{ initialCourseId?: string; onComplete: () =
     setFormData({ ...formData, count: newCount, participants: newParticipants });
   };
 
-  const locations = Array.from(new Set(COURSES.filter(c => c.category === formData.category).map(c => c.location)));
+  const locations = Array.from(new Set(courses.filter(c => c.category === formData.category).map(c => c.location)));
 
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [errors, setErrors] = useState<Set<string>>(new Set());
@@ -151,7 +219,7 @@ export const RegisterPage: React.FC<{ initialCourseId?: string; onComplete: () =
             </div>
             <div>
               <p className="text-xs text-neutral-600">班級</p>
-              <p className="text-sm font-bold text-neutral-900">{COURSES.find(c => c.id === formData.courseId)?.name}</p>
+              <p className="text-sm font-bold text-neutral-900">{courses.find(c => c.id === formData.courseId)?.name}</p>
             </div>
           </div>
         </div>
@@ -502,7 +570,7 @@ export const RegisterPage: React.FC<{ initialCourseId?: string; onComplete: () =
               {formData.location && (
                 <FormField label="班級選擇">
                   <div className={`flex flex-col gap-3 p-1 rounded-xl transition-all ${errors.has('courseId') ? 'ring-2 ring-danger/20 bg-danger/5' : ''}`}>
-                    {COURSES.filter(c => c.location === formData.location && c.category === formData.category).map(course => {
+                    {courses.filter(c => c.location === formData.location && c.category === formData.category).map(course => {
                       const isFull = course.currentEnrollment >= course.maxEnrollment;
                       const isSelected = formData.courseId === course.id;
                       return (
@@ -663,12 +731,12 @@ export const RegisterPage: React.FC<{ initialCourseId?: string; onComplete: () =
                   </div>
                   <div className="space-y-1">
                     <p className="text-xs text-neutral-600">班級</p>
-                    <p className="font-medium">{COURSES.find(c => c.id === formData.courseId)?.name}</p>
+                    <p className="font-medium">{courses.find(c => c.id === formData.courseId)?.name}</p>
                   </div>
                   <div className="space-y-1">
                     <p className="text-xs text-neutral-600">時間</p>
                     <p className="font-medium">
-                      {COURSES.find(c => c.id === formData.courseId)?.schedule} {COURSES.find(c => c.id === formData.courseId)?.time}
+                      {courses.find(c => c.id === formData.courseId)?.schedule} {courses.find(c => c.id === formData.courseId)?.time}
                     </p>
                   </div>
                   <div className="flex gap-4">
