@@ -19,8 +19,8 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Button, Badge, Input, Select, FormField } from './UI';
-import { supabase } from '../lib/supabase';
-import {
+import { CONTRACTS } from '../constants';
+import { 
   VenueContract, 
   ContractSlot, 
   WeeklyScheduleItem, 
@@ -358,53 +358,21 @@ const PhotoUploader: React.FC<{
 
 // --- Main Component ---
 
-export const AdminContractManagement: React.FC = () => {
-  const [contracts, setContracts] = useState<VenueContract[]>([]);
+interface AdminContractManagementProps {
+  contracts: VenueContract[];
+  setContracts: React.Dispatch<React.SetStateAction<VenueContract[]>>;
+}
+
+export const AdminContractManagement: React.FC<AdminContractManagementProps> = ({ contracts, setContracts }) => {
   const [modalMode, setModalMode] = useState<'add' | 'view' | 'edit' | 'renew' | null>(null);
   const [selectedContract, setSelectedContract] = useState<VenueContract | null>(null);
   
   // Form State
   const [formData, setFormData] = useState<Partial<VenueContract>>({});
-  const [isSaving, setIsSaving] = useState(false);
 
   const expiringContracts = useMemo(() => {
     return contracts.filter(c => c.daysUntilExpiry <= 30);
   }, [contracts]);
-
-  const fetchContracts = async () => {
-    const { data, error } = await supabase
-      .from('venue_contracts')
-      .select('*, venues(name, address)')
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      console.error('Error fetching contracts:', error);
-      return;
-    }
-
-    const mapped: VenueContract[] = (data || []).map((row: any) => ({
-      id: row.id,
-      venue_id: row.venue_id,
-      venue: row.venues?.name || '',
-      address: row.venues?.address || '',
-      startDate: row.start_date ? (row.start_date as string).replace(/-/g, '/') : '',
-      endDate: row.end_date ? (row.end_date as string).replace(/-/g, '/') : '',
-      rent: row.rent || 0,
-      paid: row.paid || false,
-      contractType: row.contract_type || '季租',
-      slots: row.slots || [],
-      schedule: row.schedule || [],
-      photos: row.photos || [],
-      logs: row.logs || [],
-      daysUntilExpiry: getDaysUntilExpiry(row.end_date ? (row.end_date as string).replace(/-/g, '/') : '')
-    }));
-
-    setContracts(mapped);
-  };
-
-  useEffect(() => {
-    fetchContracts();
-  }, []);
 
   const openModal = (mode: 'add' | 'view' | 'edit' | 'renew', contract?: VenueContract) => {
     setModalMode(mode);
@@ -457,153 +425,83 @@ export const AdminContractManagement: React.FC = () => {
     }
   }, [formData.startDate, formData.endDate, formData.slots, modalMode]);
 
-  const handleSave = async () => {
+  const handleSave = () => {
     const now = new Date().toLocaleString('zh-TW', { hour12: false }).replace(/\//g, '/');
-    setIsSaving(true);
-    try {
-      if (modalMode === 'add') {
-        // 1. 找或建立 venue
-        let venueId: string;
-        const { data: existingVenue } = await supabase
-          .from('venues')
-          .select('id')
-          .eq('name', formData.venue)
-          .maybeSingle();
+    
+    if (modalMode === 'add') {
+      const newContract: VenueContract = {
+        ...formData as VenueContract,
+        id: Date.now(),
+        daysUntilExpiry: getDaysUntilExpiry(formData.endDate!),
+        logs: [{ time: now, type: 'created', desc: '新增合約' }]
+      };
+      setContracts([newContract, ...contracts]);
+    } else if (modalMode === 'edit' && selectedContract) {
+      const newLogs: ContractLog[] = [...(selectedContract.logs || [])];
+      
+      // Diffing
+      const diffFields: { field: keyof VenueContract; type: ContractLog['type']; label: string }[] = [
+        { field: 'venue', type: 'edit_venue', label: '場館名稱' },
+        { field: 'address', type: 'edit_address', label: '場地地址' },
+        { field: 'startDate', type: 'edit_dates', label: '合約起始日' },
+        { field: 'endDate', type: 'edit_dates', label: '合約到期日' },
+        { field: 'rent', type: 'edit_rent', label: '場租費用' },
+        { field: 'paid', type: 'edit_paid', label: '繳費狀態' },
+        { field: 'contractType', type: 'edit_type', label: '合約類型' },
+      ];
 
-        if (existingVenue) {
-          venueId = existingVenue.id;
-        } else {
-          const { data: newVenue, error: venueError } = await supabase
-            .from('venues')
-            .insert({ name: formData.venue, address: formData.address, court_count: 0 })
-            .select('id')
-            .single();
-          if (venueError || !newVenue) {
-            console.error('Error creating venue:', venueError);
-            return;
-          }
-          venueId = newVenue.id;
-        }
-
-        // 2. 新增合約
-        const { error: contractError } = await supabase
-          .from('venue_contracts')
-          .insert({
-            venue_id: venueId,
-            start_date: formData.startDate?.replace(/\//g, '-'),
-            end_date: formData.endDate?.replace(/\//g, '-'),
-            rent: formData.rent,
-            paid: formData.paid ?? false,
-            contract_type: formData.contractType,
-            slots: formData.slots,
-            schedule: formData.schedule,
-            photos: formData.photos,
-            logs: [{ time: now, type: 'created', desc: '新增合約' }]
-          });
-        if (contractError) {
-          console.error('Error creating contract:', contractError);
-          return;
-        }
-
-      } else if (modalMode === 'edit' && selectedContract) {
-        const newLogs: ContractLog[] = [...(selectedContract.logs || [])];
-
-        const diffFields: { field: keyof VenueContract; type: ContractLog['type'] }[] = [
-          { field: 'venue', type: 'edit_venue' },
-          { field: 'address', type: 'edit_address' },
-          { field: 'startDate', type: 'edit_dates' },
-          { field: 'endDate', type: 'edit_dates' },
-          { field: 'rent', type: 'edit_rent' },
-          { field: 'paid', type: 'edit_paid' },
-          { field: 'contractType', type: 'edit_type' },
-        ];
-        diffFields.forEach(({ field, type }) => {
-          if (formData[field] !== selectedContract[field]) {
-            newLogs.push({ time: now, type, from: String(selectedContract[field]), to: String(formData[field]) });
-          }
-        });
-
-        // 若場館名稱/地址有改，同步更新 venues 表
-        if (selectedContract.venue_id && (formData.venue !== selectedContract.venue || formData.address !== selectedContract.address)) {
-          await supabase
-            .from('venues')
-            .update({ name: formData.venue, address: formData.address })
-            .eq('id', selectedContract.venue_id);
-        }
-
-        const { error } = await supabase
-          .from('venue_contracts')
-          .update({
-            start_date: formData.startDate?.replace(/\//g, '-'),
-            end_date: formData.endDate?.replace(/\//g, '-'),
-            rent: formData.rent,
-            paid: formData.paid,
-            contract_type: formData.contractType,
-            slots: formData.slots,
-            schedule: formData.schedule,
-            photos: formData.photos,
-            logs: newLogs
-          })
-          .eq('id', selectedContract.id);
-        if (error) {
-          console.error('Error updating contract:', error);
-          return;
-        }
-
-      } else if (modalMode === 'renew' && selectedContract) {
-        const newLogs = [
-          ...(selectedContract.logs || []),
-          {
+      diffFields.forEach(({ field, type }) => {
+        if (formData[field] !== selectedContract[field]) {
+          newLogs.push({
             time: now,
-            type: 'renewed' as const,
-            from: `${selectedContract.startDate} - ${selectedContract.endDate}`,
-            to: `${formData.startDate} - ${formData.endDate}`
-          }
-        ];
-        const { error } = await supabase
-          .from('venue_contracts')
-          .update({
-            start_date: formData.startDate?.replace(/\//g, '-'),
-            end_date: formData.endDate?.replace(/\//g, '-'),
-            rent: formData.rent,
-            paid: formData.paid,
-            contract_type: formData.contractType,
-            slots: formData.slots,
-            schedule: formData.schedule,
-            photos: formData.photos,
-            logs: newLogs
-          })
-          .eq('id', selectedContract.id);
-        if (error) {
-          console.error('Error renewing contract:', error);
-          return;
+            type,
+            from: String(selectedContract[field]),
+            to: String(formData[field])
+          });
         }
-      }
+      });
 
-      await fetchContracts();
-      closeModal();
-    } finally {
-      setIsSaving(false);
+      const updatedContract: VenueContract = {
+        ...selectedContract,
+        ...formData,
+        logs: newLogs,
+        daysUntilExpiry: getDaysUntilExpiry(formData.endDate!)
+      } as VenueContract;
+
+      setContracts(contracts.map(c => c.id === selectedContract.id ? updatedContract : c));
+    } else if (modalMode === 'renew' && selectedContract) {
+      const updatedContract: VenueContract = {
+        ...selectedContract,
+        ...formData,
+        logs: [
+          ...(selectedContract.logs || []),
+          { 
+            time: now, 
+            type: 'renewed', 
+            from: `${selectedContract.startDate} - ${selectedContract.endDate}`,
+            to: `${formData.startDate} - ${formData.endDate}` 
+          }
+        ],
+        daysUntilExpiry: getDaysUntilExpiry(formData.endDate!)
+      } as VenueContract;
+      setContracts(contracts.map(c => c.id === selectedContract.id ? updatedContract : c));
     }
+
+    closeModal();
   };
 
-  const handleConfirmPayment = async (id: string) => {
+  const handleConfirmPayment = (id: number) => {
     const now = new Date().toLocaleString('zh-TW', { hour12: false }).replace(/\//g, '/');
-    const contract = contracts.find(c => c.id === id);
-    if (!contract) return;
-
-    const newLogs = [...contract.logs, { time: now, type: 'edit_paid' as const, from: '待繳費', to: '已繳費' }];
-    const { error } = await supabase
-      .from('venue_contracts')
-      .update({ paid: true, logs: newLogs })
-      .eq('id', id);
-
-    if (error) {
-      console.error('Error confirming payment:', error);
-      return;
-    }
-
-    await fetchContracts();
+    setContracts(contracts.map(c => {
+      if (c.id === id) {
+        return {
+          ...c,
+          paid: true,
+          logs: [...c.logs, { time: now, type: 'edit_paid', from: '待繳費', to: '已繳費' }]
+        };
+      }
+      return c;
+    }));
     if (selectedContract?.id === id) {
       setSelectedContract(prev => prev ? { ...prev, paid: true } : null);
     }
@@ -938,7 +836,7 @@ export const AdminContractManagement: React.FC = () => {
                       <Button 
                         onClick={handleSave}
                         className="flex-1 h-14 rounded-2xl shadow-lg shadow-primary/20"
-                        disabled={!formData.venue || !formData.startDate || !formData.endDate || !formData.slots?.length || isSaving}
+                        disabled={!formData.venue || !formData.startDate || !formData.endDate || !formData.slots?.length}
                       >
                         {modalMode === 'add' ? '確認新增' : modalMode === 'edit' ? '確認異動' : '確認續約'}
                       </Button>

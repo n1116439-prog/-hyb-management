@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Calendar, Clock, MapPin, User, ChevronRight, Info, 
@@ -6,7 +6,7 @@ import {
   Activity, ArrowUpRight, Filter, ChevronDown
 } from 'lucide-react';
 import { Course, WaitlistEntry } from '../types';
-import { supabase } from '../lib/supabase';
+import { COURSES } from '../constants';
 import { Badge, ProgressBar, Button, Select } from './UI';
 import { BottomSheet } from './BottomSheet';
 import { WaitlistForm } from './WaitlistForm';
@@ -31,77 +31,15 @@ const TODAY_SCHEDULE = [
 ];
 
 export const CourseOverviewPage: React.FC<{ 
+  courses: Course[];
   onRegister: (courseId: string) => void; 
   userRole: 'user' | 'admin' | 'student';
   onJoinWaitlist: (entry: Omit<WaitlistEntry, 'id'>) => void;
-}> = ({ onRegister, userRole, onJoinWaitlist }) => {
-  const [COURSES, setCourses] = useState<Course[]>([]);
-  const [loading, setLoading] = useState(true);
+}> = ({ courses, onRegister, userRole, onJoinWaitlist }) => {
   const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
   const [waitlistCourse, setWaitlistCourse] = useState<Course | null>(null);
   const [activeFilter, setActiveFilter] = useState('全部');
   const [viewMode, setViewMode] = useState<'dashboard' | 'courses'>(userRole === 'admin' ? 'dashboard' : 'courses');
-
-  useEffect(() => {
-    const fetchCourses = async () => {
-      setLoading(true);
-      const { data, error } = await supabase
-        .from('courses')
-        .select('*, coaches(name), venues(name, address)')
-        .order('name');
-
-      if (error) {
-        console.error('Error fetching courses:', error);
-        setLoading(false);
-        return;
-      }
-
-      if (data) {
-        const mapped: Course[] = data.map((row: any) => {
-          const category: 'children' | 'adult' = row.category === '兒童班' ? 'children' : 'adult';
-
-          const startTime = row.start_time?.slice(0, 5) ?? '';
-          const endTime = row.end_time?.slice(0, 5) ?? '';
-          const time = startTime && endTime ? `${startTime} – ${endTime}` : '';
-
-          const location = row.venues?.name ?? '';
-
-          const coaches: string[] = Array.isArray(row.coaches)
-            ? row.coaches.map((c: any) => c.name)
-            : row.coaches?.name ? [row.coaches.name] : [];
-
-          const region = location.split(/[\s[]/)[0] ?? '';
-          const tags: string[] = [];
-          if (region) tags.push(region);
-          if (row.day_of_week) tags.push(row.day_of_week);
-          if (row.status === '招生中') tags.push('招生中');
-
-          const thumbnail = `https://picsum.photos/seed/${row.id}/200/200`;
-
-          return {
-            id: String(row.id),
-            name: row.name,
-            category,
-            schedule: row.day_of_week ?? '',
-            time,
-            location,
-            coaches,
-            thumbnail,
-            currentEnrollment: row.current_students ?? 0,
-            maxEnrollment: row.max_students ?? 0,
-            waitlistCount: row.waitlist_count ?? undefined,
-            price: row.price ?? 0,
-            description: row.description ?? '',
-            tags,
-          };
-        });
-        setCourses(mapped);
-      }
-      setLoading(false);
-    };
-
-    fetchCourses();
-  }, []);
 
   // Sync viewMode when userRole changes (e.g. on logout)
   useMemo(() => {
@@ -116,7 +54,7 @@ export const CourseOverviewPage: React.FC<{
 
   const filters = ['全部', '兒童班', '成人班', '林口', '板橋', '永和', '中和', '文山', '有名額'];
 
-  const filteredCourses = COURSES.filter(course => {
+  const filteredCourses = courses.filter(course => {
     if (activeFilter === '全部') return true;
     if (activeFilter === '有名額') return course.currentEnrollment < course.maxEnrollment;
     if (activeFilter === '兒童班') return course.category === 'children';
@@ -163,7 +101,7 @@ export const CourseOverviewPage: React.FC<{
               className="relative z-10"
             >
               <h2 className="text-2xl font-bold mb-1">本週開放課程</h2>
-              <p className="text-sm opacity-90 mb-3">共 {COURSES.length} 個班級 · 本月 238 人</p>
+              <p className="text-sm opacity-90 mb-3">共 {courses.length} 個班級 · 本月 238 人</p>
               <button className="flex items-center gap-1 text-xs font-semibold bg-white/20 backdrop-blur-md px-3 py-1.5 rounded-full hover:bg-white/30 transition-colors">
                 立即申請試上 <ChevronRight size={14} />
               </button>
@@ -412,13 +350,8 @@ export const CourseOverviewPage: React.FC<{
 
           {/* Course List */}
           <div className="flex flex-col gap-12 px-4">
-            {loading && (
-              <div className="flex items-center justify-center py-16 text-neutral-500 font-medium">
-                載入課程中...
-              </div>
-            )}
             {/* Upcoming Classes */}
-            {!loading && filteredCourses.some(c => c.tags.includes('招生中')) && (
+            {filteredCourses.some(c => c.tags.includes('招生中')) && (
               <div className="space-y-6">
                 <div className="flex items-center gap-3 border-l-4 border-primary pl-4">
                   <h2 className="text-xl font-bold text-neutral-900">即將開班</h2>
@@ -558,7 +491,7 @@ export const CourseOverviewPage: React.FC<{
             )}
 
             {/* Ongoing Classes */}
-            {!loading && filteredCourses.some(c => !c.tags.includes('招生中')) && (
+            {filteredCourses.some(c => !c.tags.includes('招生中')) && (
               <div className="space-y-6">
                 <div className="flex items-center gap-3 border-l-4 border-accent pl-4">
                   <h2 className="text-xl font-bold text-neutral-900">已開班</h2>

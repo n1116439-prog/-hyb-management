@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Check, ChevronRight, User, Phone, Mail, Calendar, Info, Users, Clock, MapPin, AlertCircle, ArrowLeft, DollarSign } from 'lucide-react';
 import { RegistrationData, Course, Participant } from '../types';
-import { supabase } from '../lib/supabase';
+import { COURSES } from '../constants';
 import { Button, FormField, Input, Select, Badge } from './UI';
 
 const PLANS = {
@@ -24,7 +24,7 @@ const PLANS = {
   ]
 };
 
-export const RegisterPage: React.FC<{ initialCourseId?: string; onComplete: () => void }> = ({ initialCourseId, onComplete }) => {
+export const RegisterPage: React.FC<{ courses: Course[]; initialCourseId?: string; onComplete: () => void; userRole: 'user' | 'admin' | 'student' }> = ({ courses, initialCourseId, onComplete, userRole }) => {
   const [step, setStep] = useState(1);
   const [formData, setFormData] = useState<RegistrationData>({
     phone: '',
@@ -35,83 +35,38 @@ export const RegisterPage: React.FC<{ initialCourseId?: string; onComplete: () =
     injuryDetail: '',
     source: '朋友介紹',
     type: 'trial',
-    category: 'children',
+    category: initialCourseId ? (courses.find(c => c.id === initialCourseId)?.category || 'children') : 'children',
     planId: 'trial',
     count: 1,
     participants: [{ name: '', gender: '男', birthday: '' }],
-    location: '',
+    location: initialCourseId ? (courses.find(c => c.id === initialCourseId)?.location || '') : '',
     courseId: initialCourseId || '',
     trialDate: '',
     note: ''
   });
 
-  const [courses, setCourses] = useState<Course[]>([]);
-  const [loadingCourses, setLoadingCourses] = useState(true);
+  const [isSubmitted, setIsSubmitted] = useState(false);
+  const [errors, setErrors] = useState<Set<string>>(new Set());
 
-  useEffect(() => {
-    const fetchCourses = async () => {
-      setLoadingCourses(true);
-      const { data, error } = await supabase
-        .from('courses')
-        .select('*, coaches(name), venues(name, address)')
-        .order('name');
-
-      if (error) {
-        console.error('Error fetching courses:', error);
-        setLoadingCourses(false);
-        return;
-      }
-
-      if (data) {
-        const mapped: Course[] = data.map((row: any) => {
-          const category: 'children' | 'adult' = row.category === '兒童班' ? 'children' : 'adult';
-          const startTime = row.start_time?.slice(0, 5) ?? '';
-          const endTime = row.end_time?.slice(0, 5) ?? '';
-          const time = startTime && endTime ? `${startTime} – ${endTime}` : '';
-          const location = row.venues?.name ?? '';
-          const coaches: string[] = Array.isArray(row.coaches)
-            ? row.coaches.map((c: any) => c.name)
-            : row.coaches?.name ? [row.coaches.name] : [];
-          const thumbnail = `https://picsum.photos/seed/${row.id}/200/200`;
-
-          return {
-            id: String(row.id),
-            name: row.name,
-            category,
-            schedule: row.day_of_week ?? '',
-            time,
-            location,
-            coaches,
-            thumbnail,
-            currentEnrollment: row.current_students ?? 0,
-            maxEnrollment: row.max_students ?? 0,
-            price: row.price ?? 0,
-            description: row.description ?? '',
-            tags: [],
-          };
-        });
-        setCourses(mapped);
-      }
-      setLoadingCourses(false);
-    };
-
-    fetchCourses();
-  }, []);
-
-  // 當課程資料載入完成且有 initialCourseId 時，自動填入課程相關欄位
-  useEffect(() => {
-    if (initialCourseId && courses.length > 0) {
-      const course = courses.find(c => c.id === initialCourseId);
-      if (course) {
-        setFormData(prev => ({
-          ...prev,
-          category: course.category,
-          location: course.location,
-          courseId: initialCourseId,
-        }));
-      }
-    }
-  }, [initialCourseId, courses]);
+  if (userRole === 'user') {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh] px-4">
+        <div className="w-24 h-24 bg-neutral-100 rounded-full flex items-center justify-center mb-6">
+          <User size={40} className="text-neutral-400" />
+        </div>
+        <h2 className="text-2xl font-bold text-neutral-900 mb-2">請先登入會員</h2>
+        <p className="text-neutral-500 mb-8 text-center">登入後即可開始填寫報名資料。</p>
+        <div className="flex gap-4 w-full max-w-sm">
+          <Button className="whitespace-nowrap" onClick={() => window.dispatchEvent(new CustomEvent('open-login'))}>
+            立即登入
+          </Button>
+          <Button className="whitespace-nowrap" variant="outline" onClick={() => window.dispatchEvent(new CustomEvent('open-register'))}>
+            註冊帳號
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   const updateParticipant = (index: number, field: keyof Participant, value: string) => {
     const newParticipants = [...formData.participants];
@@ -132,9 +87,6 @@ export const RegisterPage: React.FC<{ initialCourseId?: string; onComplete: () =
   };
 
   const locations = Array.from(new Set(courses.filter(c => c.category === formData.category).map(c => c.location)));
-
-  const [isSubmitted, setIsSubmitted] = useState(false);
-  const [errors, setErrors] = useState<Set<string>>(new Set());
 
   const steps = [
     { id: 1, label: '填寫資料' },

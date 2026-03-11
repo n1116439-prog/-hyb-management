@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Home, ClipboardList, PenTool, Search, Menu, X, ChevronLeft, Users, FileText, Bell, LayoutDashboard } from 'lucide-react';
+import { Home, ClipboardList, PenTool, Search, Menu, X, ChevronLeft, Users, FileText, Bell, LayoutDashboard, UserCheck, DollarSign, Activity } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Badge } from './UI';
 
@@ -27,7 +27,7 @@ export const Layout: React.FC<LayoutProps> = ({
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const studentTabs = [
     { id: 'home', icon: Home, label: '課程班級' },
-    { id: 'sessions', icon: ClipboardList, label: '課程管理' },
+    { id: 'sessions', icon: ClipboardList, label: '我的課程' },
     { id: 'register', icon: PenTool, label: '立即報名' },
   ];
 
@@ -35,6 +35,9 @@ export const Layout: React.FC<LayoutProps> = ({
     { id: 'admin-dashboard', icon: LayoutDashboard, label: '儀表板' },
     { id: 'admin-courses', icon: ClipboardList, label: '課程管理' },
     { id: 'admin-students', icon: Users, label: '學員管理' },
+    { id: 'admin-coaches', icon: UserCheck, label: '教練管理' },
+    { id: 'admin-revenue', icon: DollarSign, label: '營收管理' },
+    { id: 'admin-attendance', icon: Activity, label: '出席率' },
     { id: 'admin-contracts', icon: FileText, label: '場地合約' },
     { id: 'admin-notifications', icon: Bell, label: '通知中心' },
   ];

@@ -145,8 +145,7 @@ export interface ContractLog {
 }
 
 export interface VenueContract {
-  id: string;
-  venue_id?: string;
+  id: number;
   venue: string;
   address: string;
   startDate: string;

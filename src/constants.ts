@@ -80,7 +80,7 @@ export const NOTIFICATION_SETTINGS: NotificationSettings = {
 
 export const CONTRACTS: VenueContract[] = [
   {
-    id: '1',
+    id: 1,
     venue: '景新國小',
     address: '新北市中和區景新街 467 巷 37 號',
     startDate: '2024/01/01',
@@ -106,7 +106,7 @@ export const CONTRACTS: VenueContract[] = [
     daysUntilExpiry: 118
   },
   {
-    id: '2',
+    id: 2,
     venue: '頭湖國小',
     address: '新北市林口區民權路 101 號',
     startDate: '2024/01/01',
@@ -128,7 +128,7 @@ export const CONTRACTS: VenueContract[] = [
     daysUntilExpiry: 302
   },
   {
-    id: '3',
+    id: 3,
     venue: '江翠國小',
     address: '新北市板橋區文化路二段 413 號',
     startDate: '2024/01/01',
