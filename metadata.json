@@ -1,0 +1,5 @@
+{
+  "name": "hyb-management",
+  "description": "恆躍羽球學院專業管理後台，提供儀表板總覽、課程上架、場地合約管理、學員名單及通知中心等完整功能。",
+  "requestFramePermissions": []
+}
