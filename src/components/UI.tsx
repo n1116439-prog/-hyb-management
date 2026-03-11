@@ -1,6 +1,6 @@
-import React from 'react';
-import { motion } from 'motion/react';
-import { LucideIcon } from 'lucide-react';
+import React, { useState, useCallback, useRef } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
+import { LucideIcon, CheckCircle, AlertCircle, Info } from 'lucide-react';
 
 interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: 'primary' | 'outline' | 'ghost';
@@ -102,7 +102,7 @@ export const Input: React.FC<React.InputHTMLAttributes<HTMLInputElement> & { err
 
 export const Select: React.FC<React.SelectHTMLAttributes<HTMLSelectElement> & { error?: boolean }> = ({ children, error, ...props }) => {
   return (
-    <select 
+    <select
       {...props}
       className={`w-full h-[48px] px-4 rounded-input border ${error ? 'border-danger bg-danger/5' : 'border-neutral-300'} focus:border-primary focus:ring-1 focus:ring-primary focus:bg-primary-light outline-none transition-all appearance-none bg-white ${props.className || ''}`}
     >
@@ -110,3 +110,58 @@ export const Select: React.FC<React.SelectHTMLAttributes<HTMLSelectElement> & { 
     </select>
   );
 };
+
+// ─── Toast ──────────────────────────────────────────────────────────────────
+
+interface ToastItem {
+  id: number;
+  message: string;
+  type: 'success' | 'error' | 'info';
+}
+
+export function useToast() {
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const idRef = useRef(0);
+
+  const showToast = useCallback((message: string, type: 'success' | 'error' | 'info' = 'success') => {
+    const id = ++idRef.current;
+    setToasts(prev => [...prev, { id, message, type }]);
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 2500);
+  }, []);
+
+  return { toasts, showToast };
+}
+
+const TOAST_ICON = {
+  success: CheckCircle,
+  error: AlertCircle,
+  info: Info,
+};
+
+const TOAST_STYLE = {
+  success: 'bg-emerald-600',
+  error: 'bg-danger',
+  info: 'bg-primary',
+};
+
+export const ToastContainer: React.FC<{ toasts: ToastItem[] }> = ({ toasts }) => (
+  <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[9999] flex flex-col items-center gap-2 pointer-events-none">
+    <AnimatePresence>
+      {toasts.map(t => {
+        const Icon = TOAST_ICON[t.type];
+        return (
+          <motion.div
+            key={t.id}
+            initial={{ opacity: 0, y: -20, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -10, scale: 0.95 }}
+            className={`${TOAST_STYLE[t.type]} text-white px-5 py-3 rounded-2xl shadow-lg flex items-center gap-2 text-sm font-medium`}
+          >
+            <Icon size={18} />
+            {t.message}
+          </motion.div>
+        );
+      })}
+    </AnimatePresence>
+  </div>
+);

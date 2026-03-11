@@ -20,7 +20,7 @@ import {
   User,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Button, Input, Select, Badge, ProgressBar, FormField } from './UI';
+import { Button, Input, Select, Badge, ProgressBar, FormField, useToast, ToastContainer } from './UI';
 import { SessionUsage, WaitlistEntry } from '../types';
 import { supabase } from '../lib/supabase';
 
@@ -82,6 +82,7 @@ export const AdminStudentManagement: React.FC<{
   const [editForm, setEditForm] = useState<Partial<StudentRecord>>({});
   const [showAddModal, setShowAddModal] = useState(false);
   const [addForm, setAddForm] = useState<AddStudentForm>(DEFAULT_ADD_FORM);
+  const { toasts, showToast } = useToast();
 
   // ── fetch ───────────────────────────────────────────────────────────────────
 
@@ -323,7 +324,30 @@ export const AdminStudentManagement: React.FC<{
     }
   };
 
-  const handleExportStudents = () => alert('正在匯出學員名單...');
+  const handleExportStudents = () => {
+    const header = ['姓名', '電話', '郵件', '課程', '剩餘堂數', '總堂數', '到期日', '繳費狀態'];
+    const rows = filteredStudents.map(s => [
+      s.studentName,
+      s.phone,
+      s.email,
+      s.courseName,
+      String(s.remaining),
+      String(s.total),
+      s.expiryDate,
+      s.paymentStatus === 'paid' ? '已繳費' : '未繳費',
+    ]);
+    const csv = [header, ...rows].map(r => r.map(c => `"${c}"`).join(',')).join('\n');
+    const bom = '\uFEFF';
+    const blob = new Blob([bom + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const date = new Date().toISOString().split('T')[0];
+    a.href = url;
+    a.download = `學員名單_${date}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast(`已匯出 ${filteredStudents.length} 筆學員名單`, 'success');
+  };
 
   // ── derived ──────────────────────────────────────────────────────────────────
 
@@ -337,6 +361,7 @@ export const AdminStudentManagement: React.FC<{
 
   return (
     <div className="space-y-8 pb-12">
+      <ToastContainer toasts={toasts} />
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">

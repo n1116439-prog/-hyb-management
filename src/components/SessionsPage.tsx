@@ -3,7 +3,7 @@ import { motion } from 'motion/react';
 import { Search, History, ChevronDown, ChevronRight, ShoppingCart, CreditCard, Landmark, Wallet } from 'lucide-react';
 import { Session, WaitlistEntry } from '../types';
 import { SESSIONS } from '../constants';
-import { Badge, Button } from './UI';
+import { Badge, Button, useToast, ToastContainer } from './UI';
 import { BottomSheet } from './BottomSheet';
 import { Clock, MapPin, User as UserIcon } from 'lucide-react';
 
@@ -15,11 +15,14 @@ export const SessionsPage: React.FC<{
   const [selectedSession, setSelectedSession] = useState<Session | null>(null);
   const [isPurchaseOpen, setIsPurchaseOpen] = useState(false);
   const [expandedDetails, setExpandedDetails] = useState<string | null>(null);
+  const [selectedPlan, setSelectedPlan] = useState<number | null>(null);
+  const [sessions, setSessions] = useState(SESSIONS);
+  const { toasts, showToast } = useToast();
 
   // Mock: If student is logged in, they are "王小美"
   const studentName = userRole === 'student' ? '王小美' : '';
 
-  const filteredSessions = SESSIONS.filter(session => {
+  const filteredSessions = sessions.filter(session => {
     const matchesSearch = session.studentName.includes(searchQuery) || session.courseName.includes(searchQuery);
     if (userRole === 'student') {
       return session.studentName === studentName && matchesSearch;
@@ -63,6 +66,7 @@ export const SessionsPage: React.FC<{
 
   return (
     <div className="flex flex-col gap-6 px-4 pt-6">
+      <ToastContainer toasts={toasts} />
       {userRole === 'student' && (
         <motion.div 
           initial={{ opacity: 0, y: -20 }}
@@ -279,9 +283,10 @@ export const SessionsPage: React.FC<{
             ].map(plan => (
               <button
                 key={plan.count}
+                onClick={() => setSelectedPlan(plan.count)}
                 className={`p-4 rounded-xl border-2 flex items-center justify-between transition-all ${
-                  plan.recommended 
-                    ? 'border-primary bg-primary-light shadow-active' 
+                  selectedPlan === plan.count
+                    ? 'border-primary bg-primary-light shadow-active'
                     : 'border-neutral-100 bg-white hover:border-neutral-200'
                 }`}
               >
@@ -296,7 +301,7 @@ export const SessionsPage: React.FC<{
                     <p className="text-xs text-neutral-600">NT$ {plan.price.toLocaleString()}</p>
                   </div>
                 </div>
-                {plan.recommended && (
+                {plan.count === 20 && (
                   <Badge variant="secondary">最划算</Badge>
                 )}
               </button>
@@ -322,11 +327,19 @@ export const SessionsPage: React.FC<{
             </div>
           </div>
 
-          <Button 
+          <Button
             onClick={() => {
-              alert('購買成功！堂數已更新。');
+              if (!selectedPlan || !selectedSession) return;
+              setSessions(prev => prev.map(s =>
+                s.id === selectedSession.id
+                  ? { ...s, remaining: s.remaining + selectedPlan, total: s.total + selectedPlan }
+                  : s
+              ));
+              showToast(`購買成功！已加購 ${selectedPlan} 堂`, 'success');
               setIsPurchaseOpen(false);
-            }} 
+              setSelectedPlan(null);
+            }}
+            disabled={!selectedPlan}
             icon={ShoppingCart}
           >
             確認購買

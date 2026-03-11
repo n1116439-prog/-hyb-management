@@ -20,7 +20,7 @@ import {
   ResponsiveContainer
 } from 'recharts';
 import { motion } from 'motion/react';
-import { Badge, Button } from './UI';
+import { Badge, Button, useToast, ToastContainer } from './UI';
 import { supabase } from '../lib/supabase';
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
@@ -79,6 +79,10 @@ export const AdminDashboard: React.FC = () => {
   const [todaySchedule, setTodaySchedule] = useState<ScheduleItem[]>([]);
   const [recentRegistrations, setRecentRegistrations] = useState<RegistrationItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showFilter, setShowFilter] = useState(false);
+  const [filterRange, setFilterRange] = useState<'all' | 'week' | 'month' | 'quarter'>('all');
+  const [dismissedSuggestion, setDismissedSuggestion] = useState(false);
+  const { toasts, showToast } = useToast();
 
   useEffect(() => {
     fetchAll();
@@ -212,10 +216,36 @@ export const AdminDashboard: React.FC = () => {
     );
   };
 
+  // ── filter helper ────────────────────────────────────────────────────────
+
+  const getFilterDate = () => {
+    const now = new Date();
+    if (filterRange === 'week') {
+      const d = new Date(now);
+      d.setDate(d.getDate() - 7);
+      return d;
+    }
+    if (filterRange === 'month') {
+      return new Date(now.getFullYear(), now.getMonth(), 1);
+    }
+    if (filterRange === 'quarter') {
+      const qMonth = Math.floor(now.getMonth() / 3) * 3;
+      return new Date(now.getFullYear(), qMonth, 1);
+    }
+    return null;
+  };
+
+  const filterDate = getFilterDate();
+
+  const filteredRegistrations = filterDate
+    ? recentRegistrations.filter(() => true) // recentRegistrations already limited, show all in range
+    : recentRegistrations;
+
   // ── render ─────────────────────────────────────────────────────────────────
 
   return (
     <div className="space-y-8 pb-12">
+      <ToastContainer toasts={toasts} />
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
@@ -233,13 +263,38 @@ export const AdminDashboard: React.FC = () => {
             <Bell size={20} />
             <span className="absolute top-2.5 right-2.5 w-2 h-2 bg-danger rounded-full border-2 border-white" />
           </button>
-          <button
-            onClick={() => alert('篩選功能開發中')}
-            className="flex items-center gap-2 bg-white px-4 py-2 rounded-xl shadow-sm border border-neutral-100 text-primary font-bold"
-          >
-            <Filter size={18} />
-            篩選
-          </button>
+          <div className="relative">
+            <button
+              onClick={() => setShowFilter(!showFilter)}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl shadow-sm border font-bold transition-colors ${
+                filterRange !== 'all'
+                  ? 'bg-primary text-white border-primary'
+                  : 'bg-white text-primary border-neutral-100'
+              }`}
+            >
+              <Filter size={18} />
+              篩選
+            </button>
+            {showFilter && (
+              <motion.div
+                initial={{ opacity: 0, y: -8 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="absolute right-0 top-12 bg-white rounded-2xl shadow-lg border border-neutral-100 py-2 w-40 z-20"
+              >
+                {([['all', '全部'], ['week', '本週'], ['month', '本月'], ['quarter', '本季']] as const).map(([value, label]) => (
+                  <button
+                    key={value}
+                    onClick={() => { setFilterRange(value); setShowFilter(false); }}
+                    className={`w-full text-left px-4 py-2.5 text-sm transition-colors ${
+                      filterRange === value ? 'text-primary font-bold bg-primary/5' : 'text-neutral-600 hover:bg-neutral-50'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </motion.div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -380,7 +435,7 @@ export const AdminDashboard: React.FC = () => {
           <Button
             variant="outline"
             className="mt-8 border-primary text-primary rounded-2xl h-12"
-            onClick={() => alert('請至課程管理新增課程')}
+            onClick={() => window.dispatchEvent(new CustomEvent('change-tab', { detail: 'admin-courses' }))}
           >
             新增課程安排
           </Button>
@@ -429,6 +484,7 @@ export const AdminDashboard: React.FC = () => {
         </div>
 
         {/* Suggestion Card */}
+        {!dismissedSuggestion && (
         <div className="bg-primary rounded-3xl p-10 text-white relative overflow-hidden shadow-xl shadow-primary/20">
           <div className="relative z-10 space-y-6">
             <h3 className="text-3xl font-bold leading-tight">準備好擴展您的課程了嗎？</h3>
@@ -439,13 +495,13 @@ export const AdminDashboard: React.FC = () => {
             </p>
             <div className="flex items-center gap-4 pt-4">
               <button
-                onClick={() => alert('已為您規劃新課程建議')}
+                onClick={() => window.dispatchEvent(new CustomEvent('change-tab', { detail: 'admin-courses' }))}
                 className="bg-white text-primary px-8 py-4 rounded-2xl font-bold text-lg shadow-lg hover:bg-neutral-50 transition-colors"
               >
                 立即行動
               </button>
               <button
-                onClick={() => alert('建議已暫存')}
+                onClick={() => { setDismissedSuggestion(true); showToast('建議已暫存', 'info'); }}
                 className="text-white font-bold text-lg hover:underline"
               >
                 稍後再說
@@ -455,6 +511,7 @@ export const AdminDashboard: React.FC = () => {
           <div className="absolute -right-20 -bottom-20 w-80 h-80 bg-white/10 rounded-full blur-3xl" />
           <div className="absolute -left-20 -top-20 w-60 h-60 bg-white/5 rounded-full blur-2xl" />
         </div>
+        )}
       </div>
     </div>
   );

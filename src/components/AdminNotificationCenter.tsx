@@ -16,7 +16,7 @@ import {
   ChevronDown
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Button, Input, Select, Badge, FormField } from './UI';
+import { Button, Input, Select, Badge, FormField, useToast, ToastContainer } from './UI';
 import { NOTIFICATIONS, NOTIFICATION_SETTINGS } from '../constants';
 import { Notification, NotificationSettings } from '../types';
 
@@ -42,6 +42,7 @@ export const AdminNotificationCenter: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState('all');
   const [filterReadStatus, setFilterReadStatus] = useState<'all' | 'unread' | 'read'>('all');
+  const { toasts, showToast } = useToast();
 
   const filteredNotifications = useMemo(() => {
     return notifications
@@ -67,8 +68,25 @@ export const AdminNotificationCenter: React.FC = () => {
   };
 
   const handleAction = (id: number) => {
+    const notification = notifications.find(n => n.id === id);
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, actionDone: true, read: true } : n));
-    alert('操作已執行');
+
+    const tabMap: Record<string, string> = {
+      contract_expiry: 'admin-contracts',
+      credits_low: 'admin-students',
+      unpaid: 'admin-students',
+      waitlist: 'admin-students',
+      new_enrollment: 'admin-students',
+      schedule_change: 'admin-courses',
+    };
+
+    if (notification) {
+      const tab = tabMap[notification.type];
+      if (tab) {
+        window.dispatchEvent(new CustomEvent('change-tab', { detail: tab }));
+      }
+    }
+    showToast('已前往處理', 'success');
   };
 
   const toggleReadFilter = () => {
@@ -81,6 +99,7 @@ export const AdminNotificationCenter: React.FC = () => {
 
   return (
     <div className="max-w-[900px] mx-auto space-y-6 pb-12">
+      <ToastContainer toasts={toasts} />
       {/* Header Tabs */}
       <div className="flex items-center gap-2 bg-white p-1 rounded-2xl shadow-sm border border-neutral-100 w-fit">
         <Button 
