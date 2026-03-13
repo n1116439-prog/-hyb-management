@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Search, 
   Filter, 
@@ -23,143 +23,170 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Button, Input, Select, Badge, ProgressBar, FormField } from './UI';
-import { SESSIONS } from '../constants';
+import { supabase } from '../lib/supabase';
 import { Session, SessionUsage, WaitlistEntry } from '../types';
 
 export const AdminStudentManagement: React.FC<{
   waitlists?: WaitlistEntry[];
 }> = ({ waitlists = [] }) => {
-  const [students, setStudents] = useState<Session[]>(SESSIONS);
+  const [students, setStudents] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+
+  const fetchStudents = async () => {
+    setLoading(true)
+
+    const { data: studentsData } = await supabase
+      .from('students')
+      .select('*')
+      .order('created_at', { ascending: false })
+
+    if (!studentsData) { setLoading(false); return }
+
+    const { data: enrollmentsData } = await supabase
+      .from('enrollments')
+      .select('student_id, course_id, status, courses(name)')
+      .eq('status', '已報名')
+
+    const { data: creditsData } = await supabase
+      .from('credits')
+      .select('student_id, total_credits, used_credits, remaining_credits')
+
+    const { data: paymentsData } = await supabase
+      .from('payments')
+      .select('student_id, amount, payment_date')
+
+    setStudents(studentsData.map(s => {
+      const studentEnrollments = enrollmentsData?.filter((e: any) => e.student_id === s.id) || []
+      const studentCredits = creditsData?.find((c: any) => c.student_id === s.id)
+      const studentPayments = paymentsData?.filter((p: any) => p.student_id === s.id) || []
+      const totalPaid = studentPayments.reduce((sum: number, p: any) => sum + (p.amount || 0), 0)
+
+      return {
+        id: s.id,
+        studentName: s.name || '',
+        phone: s.phone || '',
+        email: s.email || '',
+        gender: s.gender || '',
+        birthDate: s.birth_date || '',
+        school: s.school || '',
+        category: s.category || 'child',
+        emergencyContact: s.emergency_contact || '',
+        emergencyPhone: s.emergency_phone || '',
+        notes: s.notes || '',
+        parentUid: s.parent_uid || '',
+        studentNumber: s.student_number || '',
+        studentCode: s.student_code || '',
+        createdAt: s.created_at || '',
+        // 報名班級
+        courses: studentEnrollments.map((e: any) => (e.courses as any)?.name || '').filter(Boolean),
+        coursesDisplay: studentEnrollments.map((e: any) => (e.courses as any)?.name || '').filter(Boolean).join('、') || '未報名',
+        // 堂數
+        totalCredits: studentCredits?.total_credits || 0,
+        usedCredits: studentCredits?.used_credits || 0,
+        remainingCredits: studentCredits?.remaining_credits || 0,
+        // 繳費狀態
+        paymentStatus: totalPaid > 0 ? '已繳費' : '尚未繳費',
+        totalPaid,
+      }
+    }))
+    setLoading(false)
+  }
+
+  useEffect(() => {
+    fetchStudents()
+  }, [])
+
   const [searchQuery, setSearchQuery] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
   const [categoryTab, setCategoryTab] = useState('所有學員');
-  const [selectedStudent, setSelectedStudent] = useState<Session | null>(null);
+  const [selectedStudent, setSelectedStudent] = useState<any | null>(null);
   const [isEditing, setIsEditing] = useState(false);
-  const [editForm, setEditForm] = useState<Partial<Session>>({});
+  const [editForm, setEditForm] = useState<any>({});
+  const [usageHistory, setUsageHistory] = useState<any[]>([])
+
+  const fetchStudentAttendance = async (studentId: string) => {
+    const { data } = await supabase
+      .from('attendance')
+      .select('id, date, status, deducted, courses(name, time, venues(name))')
+      .eq('student_id', studentId)
+      .order('date', { ascending: false })
+      .limit(50)
+    setUsageHistory((data || []).map((a: any) => ({
+      id: a.id,
+      date: a.date,
+      status: a.status,
+      deducted: a.deducted,
+      courseName: (a.courses as any)?.name || '',
+      courseTime: (a.courses as any)?.time || '',
+      location: (a.courses as any)?.venues?.name || '',
+    })))
+  }
+
+  const handleSelectStudent = (student: any) => {
+    setSelectedStudent(student)
+    fetchStudentAttendance(student.id)
+  }
 
   const filteredStudents = students.filter(s => {
-    const matchSearch = s.studentName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                        s.courseName.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchStatus = filterStatus === 'all' || s.paymentStatus === filterStatus;
-    
+    const q = searchQuery.toLowerCase();
+    const matchSearch = s.studentName.toLowerCase().includes(q) ||
+                        (s.coursesDisplay || '').toLowerCase().includes(q) ||
+                        (s.phone || '').toLowerCase().includes(q) ||
+                        (s.studentCode || '').toLowerCase().includes(q);
+    const matchStatus = filterStatus === 'all' ||
+      (filterStatus === 'paid' && s.paymentStatus === '已繳費') ||
+      (filterStatus === 'unpaid' && s.paymentStatus === '尚未繳費');
+
     let matchCategory = true;
     if (categoryTab === '已參加') {
-      matchCategory = s.remaining < s.total;
+      matchCategory = s.courses.length > 0;
     } else if (categoryTab === '未參加') {
-      matchCategory = s.remaining === s.total && s.paymentStatus === 'paid';
+      matchCategory = s.courses.length === 0;
     } else if (categoryTab === '新註冊') {
-      matchCategory = s.paymentStatus === 'unpaid';
+      const created = new Date(s.createdAt || '');
+      const weekAgo = new Date();
+      weekAgo.setDate(weekAgo.getDate() - 7);
+      matchCategory = created > weekAgo;
     }
 
     return matchSearch && matchStatus && matchCategory;
   });
 
-  const handleAddSession = (id: string) => {
-    setStudents(prev => prev.map(s => s.id === id ? { ...s, remaining: s.remaining + 1 } : s));
-    if (selectedStudent?.id === id) {
-      setSelectedStudent(prev => prev ? { ...prev, remaining: prev.remaining + 1 } : null);
-    }
-  };
-
-  const handleDeductSession = (id: string) => {
-    setStudents(prev => prev.map(s => {
-      if (s.id === id && s.remaining > 0) {
-        const newUsage: SessionUsage = {
-          id: `u${Date.now()}`,
-          date: new Date().toLocaleDateString('zh-TW'),
-          time: '手動扣除',
-          location: '系統操作',
-          courseName: s.courseName,
-          status: 'present'
-        };
-        return { 
-          ...s, 
-          remaining: s.remaining - 1,
-          usageHistory: [newUsage, ...(s.usageHistory || [])]
-        };
-      }
-      return s;
-    }));
-    
-    if (selectedStudent?.id === id && selectedStudent.remaining > 0) {
-      const newUsage: SessionUsage = {
-        id: `u${Date.now()}`,
-        date: new Date().toLocaleDateString('zh-TW'),
-        time: '手動扣除',
-        location: '系統操作',
-        courseName: selectedStudent.courseName,
-        status: 'present'
-      };
-      setSelectedStudent(prev => prev ? { 
-        ...prev, 
-        remaining: prev.remaining - 1,
-        usageHistory: [newUsage, ...(prev.usageHistory || [])]
-      } : null);
-    }
-  };
-
-  const handleUpdateUsage = (studentId: string, usageId: string, newStatus: 'present' | 'absent' | 'excused') => {
-    setStudents(prev => prev.map(s => {
-      if (s.id === studentId) {
-        return {
-          ...s,
-          usageHistory: s.usageHistory?.map(u => u.id === usageId ? { ...u, status: newStatus } : u)
-        };
-      }
-      return s;
-    }));
-    if (selectedStudent?.id === studentId) {
-      setSelectedStudent(prev => prev ? {
-        ...prev,
-        usageHistory: prev.usageHistory?.map(u => u.id === usageId ? { ...u, status: newStatus } : u)
-      } : null);
-    }
-  };
-
-  const handleDeleteUsage = (studentId: string, usageId: string) => {
-    if (!confirm('確定要刪除此筆紀錄嗎？(刪除後將自動補回 1 堂剩餘堂數)')) return;
-    
-    setStudents(prev => prev.map(s => {
-      if (s.id === studentId) {
-        return {
-          ...s,
-          remaining: s.remaining + 1,
-          usageHistory: s.usageHistory?.filter(u => u.id !== usageId)
-        };
-      }
-      return s;
-    }));
-    if (selectedStudent?.id === studentId) {
-      setSelectedStudent(prev => prev ? {
-        ...prev,
-        remaining: prev.remaining + 1,
-        usageHistory: prev.usageHistory?.filter(u => u.id !== usageId)
-      } : null);
-    }
-  };
-
   const handleConfirmPayment = (id: string) => {
-    setStudents(prev => prev.map(s => s.id === id ? { ...s, paymentStatus: 'paid' } : s));
+    // TODO: integrate with payments table
+    setStudents(prev => prev.map(s => s.id === id ? { ...s, paymentStatus: '已繳費' } : s));
     if (selectedStudent?.id === id) {
-      setSelectedStudent(prev => prev ? { ...prev, paymentStatus: 'paid' } : null);
+      setSelectedStudent(prev => prev ? { ...prev, paymentStatus: '已繳費' } : null);
     }
   };
 
-  const handleStartEdit = (student: Session) => {
+  const handleStartEdit = (student: any) => {
     setEditForm(student);
     setIsEditing(true);
   };
 
-  const handleSaveEdit = () => {
+  const handleSaveEdit = async () => {
     if (!editForm.id) return;
-    setStudents(prev => prev.map(s => s.id === editForm.id ? { ...s, ...editForm } as Session : s));
-    setSelectedStudent(prev => prev ? { ...prev, ...editForm } as Session : null);
+    const { error } = await supabase.from('students').update({
+      name: editForm.studentName,
+      phone: editForm.phone,
+      email: editForm.email,
+      gender: editForm.gender,
+      birth_date: editForm.birthDate,
+      school: editForm.school,
+      emergency_contact: editForm.emergencyContact,
+      emergency_phone: editForm.emergencyPhone,
+      notes: editForm.notes,
+    }).eq('id', editForm.id)
+    if (!error) await fetchStudents()
+    setSelectedStudent(prev => prev ? { ...prev, ...editForm } : null);
     setIsEditing(false);
   };
 
-  const handleDeleteStudent = (id: string) => {
+  const handleDeleteStudent = async (id: string) => {
     if (confirm('確定要刪除此學員紀錄嗎？')) {
-      setStudents(prev => prev.filter(s => s.id !== id));
+      const { error } = await supabase.from('students').delete().eq('id', id)
+      if (!error) await fetchStudents()
       if (selectedStudent?.id === id) setSelectedStudent(null);
     }
   };
@@ -240,6 +267,7 @@ export const AdminStudentManagement: React.FC<{
         <table className="w-full text-left border-collapse">
           <thead>
             <tr className="border-b border-neutral-50">
+              <th className="px-8 py-6 text-xs font-bold text-neutral-400 uppercase tracking-wider">學員編號</th>
               <th className="px-8 py-6 text-xs font-bold text-neutral-400 uppercase tracking-wider">學員資訊</th>
               <th className="px-8 py-6 text-xs font-bold text-neutral-400 uppercase tracking-wider">報名班級</th>
               <th className="px-8 py-6 text-xs font-bold text-neutral-400 uppercase tracking-wider">剩餘堂數</th>
@@ -251,45 +279,48 @@ export const AdminStudentManagement: React.FC<{
             {filteredStudents.map(student => (
               <tr key={student.id} className="hover:bg-neutral-50/50 transition-colors group">
                 <td className="px-8 py-6">
+                  <span className={`text-sm font-bold ${
+                    student.studentCode?.startsWith('ST')
+                      ? 'text-blue-600'
+                      : 'text-green-600'
+                  }`}>
+                    {student.studentCode || '未編號'}
+                  </span>
+                </td>
+                <td className="px-8 py-6">
                   <div className="flex items-center gap-4">
                     <div className="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center text-primary font-bold text-lg">
                       {student.studentName[0]}
                     </div>
                     <div>
                       <h4 className="font-bold text-neutral-900 leading-tight">{student.studentName}</h4>
-                      <p className="text-xs text-neutral-400">{student.phone || '0912-345-678'}</p>
+                      <p className="text-xs text-neutral-400">{student.phone || '未填寫'}</p>
                     </div>
                   </div>
                 </td>
                 <td className="px-8 py-6">
-                  <div className="space-y-1">
-                    <p className="text-sm font-bold text-neutral-900 leading-tight">{student.courseName}</p>
-                    <div className="flex items-center gap-1.5 text-xs text-neutral-400">
-                      <Calendar size={14} />
-                      <span>{student.schedule}</span>
-                    </div>
-                  </div>
+                  <p className="text-sm font-bold text-neutral-900 leading-tight">{student.coursesDisplay}</p>
                 </td>
                 <td className="px-8 py-6">
                   <div className="flex items-center gap-2">
-                    <span className={`text-lg font-bold ${student.remaining <= 3 ? 'text-danger' : 'text-primary'}`}>
-                      {student.remaining}
+                    <span className={`text-lg font-bold ${student.remainingCredits <= 3 && student.totalCredits > 0 ? 'text-danger' : 'text-primary'}`}>
+                      {student.remainingCredits}
                     </span>
-                    <span className="text-xs text-neutral-400">/ {student.total} 堂</span>
+                    <span className="text-xs text-neutral-400">/ {student.totalCredits} 堂</span>
                   </div>
                 </td>
                 <td className="px-8 py-6">
-                  <Badge 
-                    variant={student.paymentStatus === 'paid' ? 'accent' : 'danger'}
-                    className={student.paymentStatus === 'paid' ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}
+                  <Badge
+                    variant={student.paymentStatus === '已繳費' ? 'accent' : 'danger'}
+                    className={student.paymentStatus === '已繳費' ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}
                   >
-                    {student.paymentStatus === 'paid' ? '已繳費' : '尚未繳費'}
+                    {student.paymentStatus}
                   </Badge>
                 </td>
                 <td className="px-8 py-6">
                   <div className="flex items-center gap-2">
-                    <button 
-                      onClick={() => setSelectedStudent(student)}
+                    <button
+                      onClick={() => handleSelectStudent(student)}
                       className="w-9 h-9 flex items-center justify-center rounded-xl bg-neutral-50 text-neutral-400 hover:bg-primary/10 hover:text-primary transition-colors"
                     >
                       <Eye size={16} />
@@ -345,16 +376,32 @@ export const AdminStudentManagement: React.FC<{
                   <div className="flex-1">
                     <div className="flex items-center justify-between mb-2">
                       {isEditing ? (
-                        <Input 
+                        <Input
                           value={editForm.studentName}
                           onChange={e => setEditForm({ ...editForm, studentName: e.target.value })}
                           className="text-2xl font-bold h-10 w-48"
                         />
                       ) : (
-                        <h2 className="text-3xl font-bold text-neutral-900">{selectedStudent.studentName}</h2>
+                        <div className="flex items-center gap-3">
+                          <h2 className="text-3xl font-bold text-neutral-900">{selectedStudent.studentName}</h2>
+                          {selectedStudent.studentCode && (
+                            <span className={`px-3 py-1 rounded-full text-sm font-semibold ${
+                              selectedStudent.studentCode.startsWith('ST')
+                                ? 'bg-blue-100 text-blue-700'
+                                : 'bg-green-100 text-green-700'
+                            }`}>
+                              {selectedStudent.studentCode}
+                            </span>
+                          )}
+                          <span className={`px-2 py-0.5 rounded-full text-xs ${
+                            selectedStudent.category === 'adult' ? 'bg-green-50 text-green-600' : 'bg-blue-50 text-blue-600'
+                          }`}>
+                            {selectedStudent.category === 'adult' ? '成人學員' : '兒童學員'}
+                          </span>
+                        </div>
                       )}
-                      <Badge variant={selectedStudent.paymentStatus === 'paid' ? 'accent' : 'danger'}>
-                        {selectedStudent.paymentStatus === 'paid' ? '已繳費' : '尚未繳費'}
+                      <Badge variant={selectedStudent.paymentStatus === '已繳費' ? 'accent' : 'danger'}>
+                        {selectedStudent.paymentStatus}
                       </Badge>
                     </div>
                     <div className="flex items-center gap-4 text-neutral-500">
@@ -367,12 +414,20 @@ export const AdminStudentManagement: React.FC<{
                             className="h-8 w-32 text-sm"
                           />
                         ) : (
-                          <span>{selectedStudent.phone || '0912-345-678'}</span>
+                          <span>{selectedStudent.phone || '未填寫'}</span>
                         )}
                       </div>
                       <div className="flex items-center gap-1.5 text-sm">
                         <Mail size={16} />
-                        <span>student@example.com</span>
+                        {isEditing ? (
+                          <Input
+                            value={editForm.email}
+                            onChange={e => setEditForm({ ...editForm, email: e.target.value })}
+                            className="h-8 w-48 text-sm"
+                          />
+                        ) : (
+                          <span>{selectedStudent.email || '未填寫'}</span>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -383,122 +438,158 @@ export const AdminStudentManagement: React.FC<{
                   <div className="p-6 rounded-3xl bg-neutral-50 space-y-2">
                     <p className="text-xs font-bold text-neutral-400 uppercase tracking-wider">剩餘堂數</p>
                     <div className="flex items-baseline gap-2">
-                      <span className="text-4xl font-bold text-primary">{selectedStudent.remaining}</span>
-                      <span className="text-sm font-medium text-neutral-400">/ {selectedStudent.total} 堂</span>
+                      <span className={`text-4xl font-bold ${selectedStudent.remainingCredits <= 3 && selectedStudent.totalCredits > 0 ? 'text-danger' : 'text-primary'}`}>{selectedStudent.remainingCredits}</span>
+                      <span className="text-sm font-medium text-neutral-400">/ {selectedStudent.totalCredits} 堂</span>
                     </div>
-                    <div className="flex gap-2 pt-2">
-                      <button 
-                        onClick={() => handleAddSession(selectedStudent.id)}
-                        className="flex-1 h-10 bg-white rounded-xl border border-neutral-200 text-xs font-bold text-neutral-600 hover:bg-neutral-100 transition-colors"
-                      >
-                        加堂
-                      </button>
-                      <button 
-                        onClick={() => handleDeductSession(selectedStudent.id)}
-                        className="flex-1 h-10 bg-white rounded-xl border border-neutral-200 text-xs font-bold text-neutral-600 hover:bg-neutral-100 transition-colors"
-                      >
-                        扣堂
-                      </button>
-                    </div>
+                    {selectedStudent.totalCredits > 0 && (
+                      <div className="w-full bg-neutral-200 rounded-full h-1.5 mt-2">
+                        <div
+                          className={`h-1.5 rounded-full ${selectedStudent.remainingCredits <= 3 ? 'bg-danger' : 'bg-primary'}`}
+                          style={{ width: `${(selectedStudent.usedCredits / selectedStudent.totalCredits) * 100}%` }}
+                        />
+                      </div>
+                    )}
+                    <p className="text-xs text-neutral-500">已使用 {selectedStudent.usedCredits} 堂</p>
                   </div>
                   <div className="p-6 rounded-3xl bg-neutral-50 space-y-2">
                     <p className="text-xs font-bold text-neutral-400 uppercase tracking-wider">繳費資訊</p>
                     <div className="space-y-1">
-                      <p className="font-bold text-neutral-900">匯款：NT$ 3,200</p>
-                      <p className="text-xs text-neutral-500">日期：2024/10/15</p>
+                      <p className="font-bold text-neutral-900">{selectedStudent.paymentStatus}</p>
+                      {selectedStudent.totalPaid > 0 && (
+                        <p className="text-xs text-neutral-500">累計繳費：NT$ {selectedStudent.totalPaid.toLocaleString()}</p>
+                      )}
                     </div>
-                    {selectedStudent.paymentStatus === 'unpaid' && (
-                      <Button 
-                        onClick={() => handleConfirmPayment(selectedStudent.id)}
-                        variant="primary" 
-                        className="h-10 rounded-xl text-xs mt-2 w-full"
-                      >
-                        確認銷帳
-                      </Button>
-                    )}
                   </div>
                 </div>
 
                 {/* Course Details */}
                 <div className="space-y-4">
                   <h3 className="text-lg font-bold text-neutral-900">報名班級</h3>
-                  <div className="p-6 rounded-3xl border border-neutral-100 space-y-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-xl bg-secondary/10 flex items-center justify-center text-secondary">
-                          <Calendar size={20} />
+                  {selectedStudent.courses.length > 0 ? (
+                    <div className="space-y-3">
+                      {selectedStudent.courses.map((courseName: string, idx: number) => (
+                        <div key={idx} className="p-4 rounded-2xl border border-neutral-100 flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-xl bg-secondary/10 flex items-center justify-center text-secondary">
+                              <Calendar size={20} />
+                            </div>
+                            <p className="font-bold text-neutral-900">{courseName}</p>
+                          </div>
+                          <Badge variant="accent" className="bg-emerald-50 text-emerald-600">上課中</Badge>
                         </div>
-                        <div>
-                          <p className="font-bold text-neutral-900">{selectedStudent.courseName}</p>
-                          <p className="text-xs text-neutral-500">{selectedStudent.schedule}</p>
-                        </div>
-                      </div>
-                      <Badge variant="accent">上課中</Badge>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="py-6 text-center bg-neutral-50 rounded-2xl border border-dashed border-neutral-200">
+                      <p className="text-sm text-neutral-400">尚未報名任何課程</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Additional Info */}
+                {isEditing ? (
+                  <div className="space-y-4">
+                    <h3 className="text-lg font-bold text-neutral-900">詳細資訊</h3>
+                    <div className="grid grid-cols-2 gap-4">
+                      <FormField label="性別">
+                        <Select value={editForm.gender} onChange={e => setEditForm({ ...editForm, gender: e.target.value })} className="h-10 rounded-xl">
+                          <option value="">未填寫</option>
+                          <option value="male">男</option>
+                          <option value="female">女</option>
+                        </Select>
+                      </FormField>
+                      <FormField label="出生日期">
+                        <input type="date" value={editForm.birthDate} onChange={e => setEditForm({ ...editForm, birthDate: e.target.value })} className="w-full px-3 py-2 border border-neutral-300 rounded-xl text-sm" />
+                      </FormField>
+                      <FormField label="就讀學校">
+                        <Input value={editForm.school || ''} onChange={e => setEditForm({ ...editForm, school: e.target.value })} className="h-10 rounded-xl" />
+                      </FormField>
+                      <FormField label="緊急聯絡人">
+                        <Input value={editForm.emergencyContact} onChange={e => setEditForm({ ...editForm, emergencyContact: e.target.value })} className="h-10 rounded-xl" />
+                      </FormField>
+                      <FormField label="緊急聯絡電話">
+                        <Input value={editForm.emergencyPhone} onChange={e => setEditForm({ ...editForm, emergencyPhone: e.target.value })} className="h-10 rounded-xl" />
+                      </FormField>
+                      <FormField label="備註">
+                        <Input value={editForm.notes} onChange={e => setEditForm({ ...editForm, notes: e.target.value })} className="h-10 rounded-xl" />
+                      </FormField>
                     </div>
                   </div>
-                </div>
+                ) : (
+                  <div className="space-y-4">
+                    <h3 className="text-lg font-bold text-neutral-900">詳細資訊</h3>
+                    <div className="grid grid-cols-2 gap-4">
+                      {[
+                        { label: '性別', value: selectedStudent.gender === 'male' ? '男' : selectedStudent.gender === 'female' ? '女' : '未填寫' },
+                        { label: '出生日期', value: selectedStudent.birthDate || '未填寫' },
+                        { label: '就讀學校', value: selectedStudent.school || '未填寫' },
+                        { label: '緊急聯絡人', value: selectedStudent.emergencyContact || '未填寫' },
+                        { label: '緊急聯絡電話', value: selectedStudent.emergencyPhone || '未填寫' },
+                        { label: '備註', value: selectedStudent.notes || '無' },
+                      ].map(item => (
+                        <div key={item.label} className="p-3 rounded-xl bg-neutral-50">
+                          <p className="text-xs text-neutral-400 mb-1">{item.label}</p>
+                          <p className="text-sm font-medium text-neutral-900">{item.value}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {/* Usage History */}
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
                     <h3 className="text-lg font-bold text-neutral-900">堂數使用紀錄</h3>
                     <Badge variant="neutral" className="bg-neutral-100 text-neutral-500">
-                      共 {selectedStudent.usageHistory?.length || 0} 筆
+                      共 {usageHistory.length} 筆
                     </Badge>
                   </div>
                   <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
-                    {selectedStudent.usageHistory && selectedStudent.usageHistory.length > 0 ? (
-                      selectedStudent.usageHistory.map((usage) => (
-                        <div key={usage.id} className="p-4 rounded-2xl bg-neutral-50 border border-neutral-100 flex items-center justify-between group hover:bg-white hover:shadow-md transition-all">
-                          <div className="flex items-center gap-4">
-                            <div className="w-10 h-10 rounded-xl bg-white flex items-center justify-center text-primary shadow-sm">
-                              <History size={18} />
-                            </div>
-                            <div>
-                              <div className="flex items-center gap-2">
-                                <span className="font-bold text-neutral-900">{usage.date}</span>
-                                <div className="flex items-center gap-1">
-                                  {(['present', 'absent', 'excused'] as const).map((status) => (
-                                    <button
-                                      key={status}
-                                      onClick={() => handleUpdateUsage(selectedStudent.id, usage.id, status)}
-                                      className={`px-2 py-0.5 rounded-full text-[10px] font-bold transition-all ${
-                                        usage.status === status 
-                                          ? status === 'present' ? 'bg-emerald-500 text-white' : status === 'absent' ? 'bg-rose-500 text-white' : 'bg-amber-500 text-white'
-                                          : 'bg-white text-neutral-400 border border-neutral-100 hover:bg-neutral-50'
-                                      }`}
-                                    >
-                                      {status === 'present' ? '出席' : status === 'absent' ? '缺席' : '請假'}
-                                    </button>
-                                  ))}
+                    {usageHistory.length > 0 ? (
+                      usageHistory.map((usage) => {
+                        const colorMap: Record<string, string> = {
+                          '出席': 'bg-green-100 text-green-700',
+                          '缺席': 'bg-red-100 text-red-700',
+                          '請假': 'bg-yellow-100 text-yellow-700',
+                          '遲到': 'bg-orange-100 text-orange-700',
+                          '病假': 'bg-blue-100 text-blue-700',
+                          '補課': 'bg-purple-100 text-purple-700',
+                        }
+                        return (
+                          <div key={usage.id} className="p-4 rounded-2xl bg-neutral-50 border border-neutral-100 flex items-center justify-between group hover:bg-white hover:shadow-md transition-all">
+                            <div className="flex items-center gap-4">
+                              <div className="w-10 h-10 rounded-xl bg-white flex items-center justify-center text-primary shadow-sm">
+                                <History size={18} />
+                              </div>
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <span className="font-bold text-neutral-900">{usage.date}</span>
+                                  <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${colorMap[usage.status] || 'bg-neutral-100 text-neutral-600'}`}>
+                                    {usage.status}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-3 mt-1">
+                                  {usage.courseName && (
+                                    <span className="text-xs text-neutral-500">{usage.courseName}</span>
+                                  )}
+                                  {usage.courseTime && (
+                                    <span className="text-xs text-neutral-400">{usage.courseTime}</span>
+                                  )}
+                                  {usage.location && (
+                                    <div className="flex items-center gap-1 text-xs text-neutral-400">
+                                      <MapPin size={12} />
+                                      <span>{usage.location}</span>
+                                    </div>
+                                  )}
                                 </div>
                               </div>
-                              <div className="flex items-center gap-3 mt-1">
-                                <div className="flex items-center gap-1 text-xs text-neutral-400">
-                                  <MapPin size={12} />
-                                  <span>{usage.location}</span>
-                                </div>
-                                <div className="flex items-center gap-1 text-xs text-neutral-400">
-                                  <Clock size={12} />
-                                  <span>{usage.time}</span>
-                                </div>
-                              </div>
                             </div>
+                            {usage.deducted && (
+                              <span className="text-[10px] font-bold text-neutral-400">扣 1 堂</span>
+                            )}
                           </div>
-                          <div className="flex items-center gap-3">
-                            <div className="text-right">
-                              <p className="text-[10px] font-bold text-neutral-300 uppercase tracking-wider">扣除 1 堂</p>
-                            </div>
-                            <button 
-                              onClick={() => handleDeleteUsage(selectedStudent.id, usage.id)}
-                              className="p-2 text-neutral-300 hover:text-danger opacity-0 group-hover:opacity-100 transition-all"
-                              title="刪除紀錄"
-                            >
-                              <Trash2 size={16} />
-                            </button>
-                          </div>
-                        </div>
-                      ))
+                        )
+                      })
                     ) : (
                       <div className="py-8 text-center bg-neutral-50 rounded-2xl border border-dashed border-neutral-200">
                         <p className="text-sm text-neutral-400">尚無使用紀錄</p>

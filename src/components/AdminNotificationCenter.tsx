@@ -82,16 +82,16 @@ export const AdminNotificationCenter: React.FC = () => {
   return (
     <div className="max-w-[900px] mx-auto space-y-6 pb-12">
       {/* Header Tabs */}
-      <div className="flex items-center gap-2 bg-white p-1 rounded-2xl shadow-sm border border-neutral-100 w-fit">
-        <Button 
-          variant="ghost" 
-          className="px-6 py-2 rounded-xl text-neutral-500 font-medium"
+      <div className="inline-flex items-center gap-2 bg-white p-1 rounded-2xl shadow-sm border border-neutral-100">
+        <Button
+          variant="ghost"
+          className="px-6 py-2 rounded-xl text-neutral-500 font-medium whitespace-nowrap"
           onClick={() => window.dispatchEvent(new CustomEvent('change-tab', { detail: 'admin-dashboard' }))}
         >
           儀表板
         </Button>
         <div className="relative">
-          <Button variant="primary" className="px-6 py-2 rounded-xl font-bold shadow-lg shadow-primary/20">
+          <Button variant="primary" className="px-6 py-2 rounded-xl font-bold shadow-lg shadow-primary/20 whitespace-nowrap">
             通知中心
           </Button>
           {unreadCount > 0 && (

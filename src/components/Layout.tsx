@@ -83,7 +83,7 @@ export const Layout: React.FC<LayoutProps> = ({
 
           <div className="flex flex-col lg:flex-row items-stretch lg:items-center lg:gap-4 w-full lg:w-auto">
             {/* Desktop Navigation */}
-            <nav className="hidden lg:flex items-center gap-2">
+            <nav className="hidden lg:flex items-center gap-1 flex-nowrap overflow-x-auto">
               {tabs.map((tab) => {
                 const isActive = activeTab === tab.id;
                 const Icon = tab.icon;
@@ -91,7 +91,7 @@ export const Layout: React.FC<LayoutProps> = ({
                   <button
                     key={tab.id}
                     onClick={() => onTabChange(tab.id)}
-                    className={`flex items-center gap-2 px-5 py-2.5 rounded-2xl text-sm font-bold transition-all relative ${
+                    className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-sm font-bold transition-all relative whitespace-nowrap ${
                       isActive ? 'text-primary bg-primary/5' : 'text-neutral-500 hover:bg-neutral-50'
                     }`}
                   >

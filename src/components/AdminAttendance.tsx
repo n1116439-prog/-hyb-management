@@ -1,18 +1,36 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Activity, Download, Filter, Users } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { Button, Badge } from './UI';
-
-const ATTENDANCE_DATA = [
-  { week: '第1週', rate: 92 },
-  { week: '第2週', rate: 95 },
-  { week: '第3週', rate: 91 },
-  { week: '第4週', rate: 96 },
-  { week: '第5週', rate: 94 },
-  { week: '第6週', rate: 98 },
-];
+import { supabase } from '../lib/supabase';
 
 export const AdminAttendance: React.FC = () => {
+  const [attendanceData, setAttendanceData] = useState<{week: string, rate: number}[]>([])
+
+  useEffect(() => {
+    const fetchAttendance = async () => {
+      const { data } = await supabase
+        .from('attendance')
+        .select('date, status')
+        .order('date')
+
+      if (data && data.length > 0) {
+        const grouped: Record<string, { total: number, present: number }> = {}
+        data.forEach((a, idx) => {
+          const weekNum = `第${Math.floor(idx / 7) + 1}週`
+          if (!grouped[weekNum]) grouped[weekNum] = { total: 0, present: 0 }
+          grouped[weekNum].total++
+          if (a.status === '出席') grouped[weekNum].present++
+        })
+        setAttendanceData(Object.entries(grouped).map(([week, v]) => ({
+          week,
+          rate: v.total > 0 ? Math.round((v.present / v.total) * 100) : 0,
+        })))
+      }
+    }
+    fetchAttendance()
+  }, [])
+
   return (
     <div className="space-y-8 pb-12">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -66,7 +84,7 @@ export const AdminAttendance: React.FC = () => {
         <h3 className="text-lg font-bold text-neutral-900 mb-8">整體出席率趨勢</h3>
         <div className="h-[400px] w-full">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={ATTENDANCE_DATA} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+            <LineChart data={attendanceData} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E5E5" />
               <XAxis dataKey="week" axisLine={false} tickLine={false} tick={{ fill: '#A3A3A3', fontSize: 12 }} dy={10} />
               <YAxis axisLine={false} tickLine={false} tick={{ fill: '#A3A3A3', fontSize: 12 }} dx={-10} domain={[0, 100]} tickFormatter={(value) => `${value}%`} />

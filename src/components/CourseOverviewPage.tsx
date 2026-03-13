@@ -6,7 +6,6 @@ import {
   Activity, ArrowUpRight, Filter, ChevronDown
 } from 'lucide-react';
 import { Course, WaitlistEntry } from '../types';
-import { COURSES } from '../constants';
 import { Badge, ProgressBar, Button, Select } from './UI';
 import { BottomSheet } from './BottomSheet';
 import { WaitlistForm } from './WaitlistForm';

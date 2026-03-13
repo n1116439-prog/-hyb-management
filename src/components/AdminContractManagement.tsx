@@ -19,7 +19,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Button, Badge, Input, Select, FormField } from './UI';
-import { CONTRACTS } from '../constants';
+import { supabase } from '../lib/supabase';
 import { 
   VenueContract, 
   ContractSlot, 
@@ -364,6 +364,38 @@ interface AdminContractManagementProps {
 }
 
 export const AdminContractManagement: React.FC<AdminContractManagementProps> = ({ contracts, setContracts }) => {
+  const [loading, setLoading] = useState(true)
+
+  const fetchContracts = async () => {
+    setLoading(true)
+    const { data } = await supabase
+      .from('venue_contracts')
+      .select('*, venues(name, address)')
+      .order('end_date')
+    if (data) {
+      setContracts(data.map(c => ({
+        id: c.id,
+        venue: c.venues?.name || '',
+        address: c.venues?.address || '',
+        startDate: c.start_date,
+        endDate: c.end_date,
+        rent: c.rent || 0,
+        paid: c.paid || false,
+        contractType: c.contract_type || '',
+        slots: c.slots || [],
+        schedule: c.schedule || [],
+        photos: c.photos || [],
+        logs: c.logs || [],
+        daysUntilExpiry: Math.ceil((new Date(c.end_date).getTime() - Date.now()) / (1000 * 60 * 60 * 24)),
+      })))
+    }
+    setLoading(false)
+  }
+
+  useEffect(() => {
+    fetchContracts()
+  }, [])
+
   const [modalMode, setModalMode] = useState<'add' | 'view' | 'edit' | 'renew' | null>(null);
   const [selectedContract, setSelectedContract] = useState<VenueContract | null>(null);
   
@@ -425,17 +457,43 @@ export const AdminContractManagement: React.FC<AdminContractManagementProps> = (
     }
   }, [formData.startDate, formData.endDate, formData.slots, modalMode]);
 
-  const handleSave = () => {
+  const handleSave = async () => {
     const now = new Date().toLocaleString('zh-TW', { hour12: false }).replace(/\//g, '/');
-    
+
     if (modalMode === 'add') {
-      const newContract: VenueContract = {
-        ...formData as VenueContract,
-        id: Date.now(),
-        daysUntilExpiry: getDaysUntilExpiry(formData.endDate!),
-        logs: [{ time: now, type: 'created', desc: '新增合約' }]
-      };
-      setContracts([newContract, ...contracts]);
+      // 先新增或查找場地
+      let venueId = null
+      const { data: existingVenue } = await supabase
+        .from('venues')
+        .select('id')
+        .eq('name', formData.venue)
+        .single()
+
+      if (existingVenue) {
+        venueId = existingVenue.id
+      } else {
+        const { data: newVenue } = await supabase
+          .from('venues')
+          .insert({ name: formData.venue, address: formData.address })
+          .select('id')
+          .single()
+        venueId = newVenue?.id
+      }
+
+      // 新增合約
+      const { error } = await supabase.from('venue_contracts').insert({
+        venue_id: venueId,
+        start_date: formData.startDate,
+        end_date: formData.endDate,
+        rent: formData.rent,
+        paid: formData.paid || false,
+        contract_type: formData.contractType,
+        slots: formData.slots || [],
+        schedule: formData.schedule || [],
+        photos: formData.photos || [],
+        logs: [{ time: now, type: 'created', desc: '初始合約建立' }],
+      })
+      if (!error) await fetchContracts()
     } else if (modalMode === 'edit' && selectedContract) {
       const newLogs: ContractLog[] = [...(selectedContract.logs || [])];
       
@@ -469,6 +527,20 @@ export const AdminContractManagement: React.FC<AdminContractManagementProps> = (
       } as VenueContract;
 
       setContracts(contracts.map(c => c.id === selectedContract.id ? updatedContract : c));
+
+      // Supabase update
+      const { error } = await supabase.from('venue_contracts').update({
+        rent: formData.rent,
+        paid: formData.paid,
+        contract_type: formData.contractType,
+        start_date: formData.startDate,
+        end_date: formData.endDate,
+        slots: formData.slots,
+        schedule: formData.schedule,
+        photos: formData.photos,
+        logs: newLogs,
+      }).eq('id', selectedContract.id)
+      if (!error) await fetchContracts()
     } else if (modalMode === 'renew' && selectedContract) {
       const updatedContract: VenueContract = {
         ...selectedContract,
@@ -485,6 +557,20 @@ export const AdminContractManagement: React.FC<AdminContractManagementProps> = (
         daysUntilExpiry: getDaysUntilExpiry(formData.endDate!)
       } as VenueContract;
       setContracts(contracts.map(c => c.id === selectedContract.id ? updatedContract : c));
+
+      // Supabase update for renew
+      const { error } = await supabase.from('venue_contracts').update({
+        rent: formData.rent,
+        paid: formData.paid,
+        contract_type: formData.contractType,
+        start_date: formData.startDate,
+        end_date: formData.endDate,
+        slots: formData.slots,
+        schedule: formData.schedule,
+        photos: formData.photos,
+        logs: updatedContract.logs,
+      }).eq('id', selectedContract.id)
+      if (!error) await fetchContracts()
     }
 
     closeModal();

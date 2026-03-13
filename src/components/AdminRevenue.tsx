@@ -1,18 +1,36 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { DollarSign, TrendingUp, Download, Filter } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts';
 import { Button, Badge } from './UI';
-
-const REVENUE_DATA = [
-  { month: '1月', revenue: 320000, expenses: 150000 },
-  { month: '2月', revenue: 380000, expenses: 160000 },
-  { month: '3月', revenue: 420000, expenses: 180000 },
-  { month: '4月', revenue: 450000, expenses: 190000 },
-  { month: '5月', revenue: 510000, expenses: 210000 },
-  { month: '6月', revenue: 480000, expenses: 200000 },
-];
+import { supabase } from '../lib/supabase';
 
 export const AdminRevenue: React.FC = () => {
+  const [revenueData, setRevenueData] = useState<{month: string, revenue: number, expenses: number}[]>([])
+
+  useEffect(() => {
+    const fetchRevenue = async () => {
+      const { data: payments } = await supabase
+        .from('payments')
+        .select('amount, payment_date')
+        .order('payment_date')
+
+      if (payments && payments.length > 0) {
+        const grouped: Record<string, number> = {}
+        payments.forEach(p => {
+          const date = new Date(p.payment_date)
+          const monthKey = `${date.getMonth() + 1}月`
+          grouped[monthKey] = (grouped[monthKey] || 0) + (p.amount || 0)
+        })
+        setRevenueData(Object.entries(grouped).map(([month, revenue]) => ({
+          month,
+          revenue,
+          expenses: 0,
+        })))
+      }
+    }
+    fetchRevenue()
+  }, [])
+
   return (
     <div className="space-y-8 pb-12">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -66,7 +84,7 @@ export const AdminRevenue: React.FC = () => {
         <h3 className="text-lg font-bold text-neutral-900 mb-8">營收與支出趨勢</h3>
         <div className="h-[400px] w-full">
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={REVENUE_DATA} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+            <BarChart data={revenueData} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E5E5" />
               <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fill: '#A3A3A3', fontSize: 12 }} dy={10} />
               <YAxis axisLine={false} tickLine={false} tick={{ fill: '#A3A3A3', fontSize: 12 }} dx={-10} tickFormatter={(value) => `$${value / 1000}k`} />

@@ -1,8 +1,7 @@
-import React, { useState } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
-import { ChevronDown, Calendar, Clock, MapPin, User, CheckCircle2, AlertCircle, History } from 'lucide-react';
-import { Badge, Button, ProgressBar } from './UI';
-import { COURSES } from '../constants';
+import React, { useState, useEffect } from 'react';
+import { User, History } from 'lucide-react';
+import { Badge, Button } from './UI';
+import { supabase } from '../lib/supabase';
 import { WaitlistEntry, Course } from '../types';
 
 interface SessionsPageProps {
@@ -12,15 +11,89 @@ interface SessionsPageProps {
 }
 
 export function SessionsPage({ courses, userRole, waitlists }: SessionsPageProps) {
-  const [isExpanded, setIsExpanded] = useState(false);
-  const remaining = 15;
+  const [studentCredits, setStudentCredits] = useState<{
+    id: string
+    name: string
+    studentNumber: string
+    category: string
+    totalCredits: number
+    usedCredits: number
+    remainingCredits: number
+    courses: {
+      id: string
+      courseName: string
+      schedule: string
+      time: string
+      location: string
+      enrolledAt: string
+    }[]
+  }[]>([])
+  const [expandedStudentId, setExpandedStudentId] = useState<string | null>(null)
 
-  const getStatusInfo = () => {
-    if (remaining <= 10) return { color: 'text-warning', bg: 'bg-warning/5', label: '堂數緊張' };
-    return { color: 'text-accent', bg: 'bg-accent/5', label: '堂數充足' };
-  };
+  useEffect(() => {
+    const fetchEnrollments = async (studentIds: string[], studentList: any[]) => {
+      const { data: enrollments } = await supabase
+        .from('enrollments')
+        .select('*, courses(name, category, day_of_week, start_time, end_time, price, venues(name))')
+        .in('student_id', studentIds)
+        .eq('status', '已報名')
+        .order('enrolled_at', { ascending: false })
 
-  const status = getStatusInfo();
+      // 讀取每位學員的堂數
+      const { data: credits } = await supabase
+        .from('credits')
+        .select('*')
+        .in('student_id', studentIds)
+
+      setStudentCredits(studentList.map((s: any) => {
+        const credit = credits?.find((c: any) => c.student_id === s.id)
+        const studentEnrollments = enrollments?.filter((e: any) => e.student_id === s.id) || []
+        return {
+          id: s.id,
+          name: s.name,
+          studentNumber: s.student_code || s.student_number || '',
+          category: s.category || 'child',
+          totalCredits: credit?.total_credits || 0,
+          usedCredits: credit?.used_credits || 0,
+          remainingCredits: credit?.remaining_credits || 0,
+          courses: studentEnrollments.map((e: any) => ({
+            id: e.id,
+            courseName: e.courses?.name || '未知',
+            schedule: e.courses?.day_of_week || '',
+            time: e.courses?.start_time && e.courses?.end_time
+              ? `${e.courses.start_time.slice(0, 5)}-${e.courses.end_time.slice(0, 5)}`
+              : '',
+            location: e.courses?.venues?.name || '',
+            enrolledAt: e.enrolled_at || '',
+          })),
+        }
+      }))
+    }
+
+    const fetchSessions = async () => {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+
+      const { data: myStudents } = await supabase
+        .from('students')
+        .select('id, name, student_number, student_code, category')
+        .eq('parent_uid', user.id)
+
+      if (!myStudents || myStudents.length === 0) {
+        const { data: emailMatch } = await supabase
+          .from('students')
+          .select('id, name, student_number, student_code, category')
+          .eq('email', user.email)
+
+        if (!emailMatch || emailMatch.length === 0) return
+
+        await fetchEnrollments(emailMatch.map(s => s.id), emailMatch)
+      } else {
+        await fetchEnrollments(myStudents.map(s => s.id), myStudents)
+      }
+    }
+    fetchSessions()
+  }, [])
 
   if (userRole === 'user') {
     return (
@@ -44,67 +117,107 @@ export function SessionsPage({ courses, userRole, waitlists }: SessionsPageProps
 
   return (
     <div className="max-w-3xl mx-auto space-y-6 pt-6 px-4">
-      {/* 堂數總覽 */}
-      <div className="bg-white rounded-2xl p-6 shadow-sm border border-neutral-100">
-        <div className="flex items-center justify-between mb-6">
-          <div>
-            <h2 className="text-xl font-bold text-neutral-900">我的總堂數</h2>
-            <p className="text-sm text-neutral-500 mt-1">目前可用總堂數</p>
-          </div>
-          <Badge variant={remaining <= 10 ? 'warning' : 'accent'}>{status.label}</Badge>
-        </div>
+      {/* 我的堂數 — 每位學員一張卡片，含課程列表 */}
+      <div className="space-y-3">
+        <h3 className="text-lg font-bold text-neutral-900">我的堂數</h3>
 
-        <div className="flex items-baseline gap-2 mb-8">
-          <span className="text-5xl font-black text-neutral-900">{remaining}</span>
-          <span className="text-neutral-500 font-medium">堂</span>
-        </div>
-
-        <div className="space-y-4">
-          <Button 
-            className="w-full" 
-            onClick={() => alert('購買成功！堂數已更新。')}
-          >
-            購買堂數
-          </Button>
-          
-          <button 
-            onClick={() => setIsExpanded(!isExpanded)}
-            className="w-full py-3 flex items-center justify-center gap-2 text-sm font-medium text-neutral-600 hover:bg-neutral-50 rounded-xl transition-colors"
-          >
-            堂數明細 <ChevronDown size={16} className={`transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
-          </button>
-        </div>
-
-        <AnimatePresence>
-          {isExpanded && (
-            <motion.div
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: 'auto', opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              className="overflow-hidden"
+        {studentCredits.map(student => (
+          <div key={student.id} className="bg-white rounded-2xl border border-neutral-200 shadow-sm overflow-hidden">
+            {/* 學員基本資訊（點擊展開/收合）*/}
+            <div
+              className="p-4 cursor-pointer hover:bg-neutral-50 transition-colors"
+              onClick={() => setExpandedStudentId(prev => prev === student.id ? null : student.id)}
             >
-              <div className="pt-4 mt-4 border-t border-neutral-100">
-                <p className="text-xs font-bold text-neutral-900 mb-2">堂數使用明細</p>
-                <div className="space-y-3">
-                  {[1, 2, 3].map((_, i) => (
-                    <div key={i} className="flex items-center justify-between text-sm">
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-full bg-neutral-100 flex items-center justify-center">
-                          <History size={14} className="text-neutral-500" />
-                        </div>
-                        <div>
-                          <p className="font-medium text-neutral-900">扣除堂數</p>
-                          <p className="text-xs text-neutral-500">2026/03/0{i + 1}</p>
-                        </div>
-                      </div>
-                      <span className="font-bold text-danger">-1</span>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold ${
+                    student.category === 'adult' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'
+                  }`}>
+                    {student.name?.charAt(0)}
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <p className="font-bold text-neutral-900">{student.name}</p>
+                      <span className="text-xs bg-neutral-100 text-neutral-600 px-2 py-0.5 rounded-full">{student.studentNumber}</span>
+                      <span className={`text-xs px-2 py-0.5 rounded-full ${
+                        student.category === 'adult' ? 'bg-green-50 text-green-600' : 'bg-blue-50 text-blue-600'
+                      }`}>
+                        {student.category === 'adult' ? '成人' : '兒童'}
+                      </span>
                     </div>
-                  ))}
+                    <p className="text-sm text-neutral-500 mt-0.5">
+                      剩餘 <span className={`font-bold ${student.remainingCredits <= 3 && student.totalCredits > 0 ? 'text-orange-500' : 'text-primary'}`}>{student.remainingCredits}</span> 堂
+                      {student.totalCredits > 0 && ` / 共 ${student.totalCredits} 堂`}
+                      {' · '}{student.courses.length} 門課程
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  {student.remainingCredits <= 3 && student.totalCredits > 0 && (
+                    <span className="text-xs bg-orange-50 text-orange-600 px-2 py-1 rounded-full font-medium">堂數不足</span>
+                  )}
+                  <svg className={`w-5 h-5 text-neutral-400 transition-transform ${expandedStudentId === student.id ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
                 </div>
               </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+            </div>
+
+            {/* 展開的課程列表 */}
+            {expandedStudentId === student.id && (
+              <div className="border-t border-neutral-100">
+                {student.courses.length > 0 ? (
+                  <div className="divide-y divide-neutral-100">
+                    {student.courses.map(course => (
+                      <div key={course.id} className="px-4 py-3 flex items-center justify-between hover:bg-neutral-50">
+                        <div>
+                          <p className="font-medium text-neutral-900">{course.courseName}</p>
+                          <p className="text-sm text-neutral-500">
+                            {course.schedule} {course.time} · {course.location}
+                          </p>
+                        </div>
+                        <span className="text-xs bg-green-50 text-green-600 px-2 py-1 rounded-full">進行中</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="px-4 py-6 text-center text-neutral-400 text-sm">
+                    尚未報名任何課程
+                  </div>
+                )}
+
+                {/* 堂數進度條 */}
+                {student.totalCredits > 0 && (
+                  <div className="px-4 py-3 border-t border-neutral-100 bg-neutral-50">
+                    <div className="flex justify-between text-xs text-neutral-500 mb-1">
+                      <span>堂數使用進度</span>
+                      <span>{student.usedCredits} / {student.totalCredits}</span>
+                    </div>
+                    <div className="w-full bg-neutral-200 rounded-full h-1.5">
+                      <div
+                        className={`h-1.5 rounded-full ${student.remainingCredits <= 3 ? 'bg-orange-500' : 'bg-primary'}`}
+                        style={{ width: `${(student.usedCredits / student.totalCredits) * 100}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        ))}
+
+        {studentCredits.length === 0 && (
+          <div className="text-center py-8 text-neutral-500">
+            尚無學員資料
+          </div>
+        )}
+
+        <button
+          onClick={() => window.dispatchEvent(new CustomEvent('change-tab', { detail: 'register' }))}
+          className="w-full py-3 bg-primary text-white font-bold rounded-xl hover:bg-blue-700 transition-colors"
+        >
+          購買堂數
+        </button>
       </div>
 
       {/* 候補狀態 */}
@@ -166,77 +279,6 @@ export function SessionsPage({ courses, userRole, waitlists }: SessionsPageProps
           </div>
         </div>
       )}
-
-      {/* 現有課程 */}
-      <div className="space-y-4">
-        <div className="flex items-center gap-3 border-l-4 border-primary pl-4">
-          <h2 className="text-xl font-bold text-neutral-900">現有課程</h2>
-          <Badge variant="accent">進行中</Badge>
-        </div>
-        <div className="grid gap-4 md:grid-cols-2">
-          {/* 課程 1 */}
-          <div className="bg-danger/5 rounded-2xl p-5 border border-danger/10 relative overflow-hidden">
-            <div className="absolute top-0 right-0 w-32 h-32 bg-danger/5 rounded-full -translate-y-1/2 translate-x-1/2 blur-2xl" />
-            <div className="relative z-10">
-              <div className="flex justify-between items-start mb-4">
-                <Badge variant="accent">已繳費</Badge>
-              </div>
-              <h3 className="text-lg font-bold text-neutral-900 mb-3">林口 [頭湖國小] 週六 14:00-16:00</h3>
-              <div className="space-y-2 mb-4">
-                <div className="flex items-center gap-2 text-sm text-neutral-600">
-                  <Calendar size={16} className="text-primary" />
-                  <span>2026/03/01 - 2026/06/30</span>
-                </div>
-                <div className="flex items-center gap-2 text-sm text-neutral-600">
-                  <MapPin size={16} className="text-primary" />
-                  <span>頭湖國小體育館</span>
-                </div>
-              </div>
-              <div className="flex items-center justify-between pt-4 border-t border-danger/10">
-                <div>
-                  <p className="text-xs text-neutral-500 mb-1">剩餘堂數</p>
-                  <p className="text-xl font-bold text-danger">3 堂</p>
-                </div>
-                <div className="w-12 h-12 rounded-full border-2 border-danger text-danger flex items-center justify-center font-bold text-sm bg-danger/5 flex-col leading-tight">
-                  <span>建議補</span>
-                  <span>購</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* 課程 2 */}
-          <div className="bg-white rounded-2xl p-5 border border-neutral-100 shadow-sm relative overflow-hidden">
-            <div className="absolute top-0 right-0 w-32 h-32 bg-accent/5 rounded-full -translate-y-1/2 translate-x-1/2 blur-2xl" />
-            <div className="relative z-10">
-              <div className="flex justify-between items-start mb-4">
-                <Badge variant="accent">已繳費</Badge>
-              </div>
-              <h3 className="text-lg font-bold text-neutral-900 mb-3">板橋 [江翠國小] 週六 10:00-12:00</h3>
-              <div className="space-y-2 mb-4">
-                <div className="flex items-center gap-2 text-sm text-neutral-600">
-                  <Calendar size={16} className="text-primary" />
-                  <span>2026/03/01 - 2026/06/30</span>
-                </div>
-                <div className="flex items-center gap-2 text-sm text-neutral-600">
-                  <MapPin size={16} className="text-primary" />
-                  <span>江翠國小體育館</span>
-                </div>
-              </div>
-              <div className="flex items-center justify-between pt-4 border-t border-neutral-100">
-                <div>
-                  <p className="text-xs text-neutral-500 mb-1">剩餘堂數</p>
-                  <p className="text-xl font-bold text-neutral-900">12 堂</p>
-                </div>
-                <div className="w-12 h-12 rounded-full border-2 border-accent text-accent flex items-center justify-center font-bold text-sm bg-accent/5 flex-col leading-tight">
-                  <span>堂數充</span>
-                  <span>足</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
     </div>
   );
 }

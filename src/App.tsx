@@ -11,17 +11,17 @@ import { AdminNotificationCenter } from './components/AdminNotificationCenter';
 import { AdminCoachManagement } from './components/AdminCoachManagement';
 import { AdminRevenue } from './components/AdminRevenue';
 import { AdminAttendance } from './components/AdminAttendance';
-import { History, LogIn, LogOut, ShieldCheck, User } from 'lucide-react';
+import { LogIn, ShieldCheck, User } from 'lucide-react';
 import { Button, FormField, Input } from './components/UI';
 import { BottomSheet } from './components/BottomSheet';
 
 import { Session, WaitlistEntry, Course, VenueContract } from './types';
-import { COURSES, CONTRACTS } from './constants';
+import { supabase } from './lib/supabase';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('home');
-  const [courses, setCourses] = useState<Course[]>(COURSES);
-  const [contracts, setContracts] = useState<VenueContract[]>(CONTRACTS);
+  const [courses, setCourses] = useState<Course[]>([]);
+  const [contracts, setContracts] = useState<VenueContract[]>([]);
   const [selectedCourseId, setSelectedCourseId] = useState<string | undefined>(undefined);
   const [userRole, setUserRole] = useState<'user' | 'admin' | 'student'>('user');
   const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(false);
@@ -43,10 +43,18 @@ export default function App() {
   const [isRegisterOpen, setIsRegisterOpen] = useState(false);
   const [loginMode, setLoginMode] = useState<'admin' | 'student'>('student');
   const [loginData, setLoginData] = useState({ account: '', password: '' });
-  const [registerData, setRegisterData] = useState({ email: '', account: '', password: '', phone: '' });
+  const [registerData, setRegisterData] = useState({
+    registerType: '' as '' | 'parent' | 'adult',
+    email: '', password: '', phone: '', parentName: '',
+    children: [{ name: '', gender: '', birthDate: '', school: '' }],
+    adultName: '', adultGender: '', adultBirthDate: '',
+  });
+  const [registeredStudents, setRegisteredStudents] = useState<{name: string, student_code: string}[]>([]);
+  const [showRegistrationResult, setShowRegistrationResult] = useState(false);
   const [loginStep, setLoginStep] = useState<1 | 2>(1);
   const [verifyCode, setVerifyCode] = useState('');
   const [isSendingCode, setIsSendingCode] = useState(false);
+  const [userEmail, setUserEmail] = useState<string>('');
 
   useEffect(() => {
     const handleOpenLogin = () => {
@@ -69,6 +77,95 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    const checkSession = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) {
+        setUserRole('student');
+        setUserEmail(session.user.email || '');
+      }
+    };
+    checkSession();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_OUT') {
+        setUserRole('user');
+        setIsAdminLoggedIn(false);
+        setUserEmail('');
+      } else if (session) {
+        setUserEmail(session.user.email || '');
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const fetchCourses = async () => {
+    const { data: coursesData } = await supabase
+      .from('courses')
+      .select('*, coaches(name), venues(name, address)')
+      .order('name')
+
+    // 從 enrollments 表計算每門課的實際報名人數
+    const { data: enrollments } = await supabase
+      .from('enrollments')
+      .select('course_id')
+      .eq('status', '已報名')
+
+    const enrollmentCounts: Record<string, number> = {}
+    enrollments?.forEach(e => {
+      enrollmentCounts[e.course_id] = (enrollmentCounts[e.course_id] || 0) + 1
+    })
+
+    if (coursesData) {
+      setCourses(coursesData.map(c => ({
+        id: c.id,
+        name: c.name,
+        category: c.category === '兒童班' ? 'children' : 'adult',
+        schedule: c.day_of_week,
+        time: `${c.start_time?.slice(0,5)} – ${c.end_time?.slice(0,5)}`,
+        location: c.venues?.name || '',
+        coaches: c.coaches ? [c.coaches.name] : [],
+        thumbnail: `https://picsum.photos/seed/${c.id}/200/200`,
+        currentEnrollment: enrollmentCounts[c.id] || 0,
+        maxEnrollment: c.max_students || 20,
+        price: c.price || 0,
+        description: c.description || '',
+        tags: [c.day_of_week, c.venues?.name].filter(Boolean),
+      })))
+    }
+  };
+
+  useEffect(() => {
+    const fetchData = async () => {
+      await fetchCourses()
+
+      // 讀取合約
+      const { data: contractsData } = await supabase
+        .from('venue_contracts')
+        .select('*, venues(name, address)')
+        .order('end_date')
+      if (contractsData) {
+        setContracts(contractsData.map(c => ({
+          id: c.id,
+          venue: c.venues?.name || '',
+          address: c.venues?.address || '',
+          startDate: c.start_date,
+          endDate: c.end_date,
+          rent: c.rent || 0,
+          paid: c.paid || false,
+          contractType: c.contract_type || '',
+          slots: c.slots || [],
+          schedule: c.schedule || [],
+          photos: c.photos || [],
+          logs: c.logs || [],
+          daysUntilExpiry: Math.ceil((new Date(c.end_date).getTime() - Date.now()) / (1000 * 60 * 60 * 24)),
+        })))
+      }
+    }
+    fetchData()
+  }, [])
+
   const handleRegister = (courseId: string) => {
     setSelectedCourseId(courseId);
     setActiveTab('register');
@@ -89,53 +186,219 @@ export default function App() {
     }, 1000);
   };
 
-  const handleLogin = () => {
-    // Mock login logic
+  const handleLogin = async () => {
+    // 管理員登入判斷：暫時用帳號 a11 判斷
     if (loginMode === 'admin') {
-      if (loginStep === 1) {
-        if (loginData.account === 'a123' && loginData.password === 'a123') {
-          sendVerificationCode();
-        } else {
-          alert('管理員帳號或密碼錯誤！(提示：a123)');
-        }
-      } else {
-        if (verifyCode === '123456') {
-          setUserRole('admin');
-          setIsAdminLoggedIn(true);
-          setActiveTab('admin-dashboard');
-          setIsLoginOpen(false);
-          setLoginData({ account: '', password: '' });
-          setVerifyCode('');
-          setLoginStep(1);
-        } else {
-          alert('驗證碼錯誤！(提示：123456)');
-        }
-      }
-    } else {
-      // Student login logic
-      if ((loginData.account === 'a123' && loginData.password === 'a123') || loginData.password === 'user123') {
-        setUserRole('student');
+      if (loginData.account === 'a11' && loginData.password === 'a11') {
+        setUserRole('admin');
+        setIsAdminLoggedIn(true);
+        setActiveTab('admin-dashboard');
+        setUserEmail('admin');
         setIsLoginOpen(false);
         setLoginData({ account: '', password: '' });
+        setLoginStep(1);
+        return;
       } else {
-        alert('學員帳號或密碼錯誤！(提示：a123 / a123)');
+        alert('管理員帳號或密碼錯誤！');
+        return;
       }
+    } else {
+      // 學員登入：用 email + password
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: loginData.account,
+        password: loginData.password,
+      });
+      if (error) {
+        alert('學員帳號或密碼錯誤！請用註冊時的 Email 和密碼登入。');
+        return;
+      }
+      setUserRole('student');
+      setUserEmail(loginData.account);
+      setIsLoginOpen(false);
+      setLoginData({ account: '', password: '' });
     }
   };
 
-  const handleRegisterUser = () => {
-    if (!registerData.email || !registerData.account || !registerData.password || !registerData.phone) {
+  const addChild = () => {
+    setRegisterData(prev => ({
+      ...prev,
+      children: [...prev.children, { name: '', gender: '', birthDate: '', school: '' }]
+    }));
+  };
+
+  const removeChild = (index: number) => {
+    if (registerData.children.length <= 1) return;
+    setRegisterData(prev => ({
+      ...prev,
+      children: prev.children.filter((_, i) => i !== index)
+    }));
+  };
+
+  const updateChild = (index: number, field: string, value: string) => {
+    setRegisterData(prev => ({
+      ...prev,
+      children: prev.children.map((c, i) => i === index ? { ...c, [field]: value } : c)
+    }));
+  };
+
+  const calculateAge = (birthday: string): number => {
+    const birth = new Date(birthday);
+    const today = new Date();
+    let age = today.getFullYear() - birth.getFullYear();
+    const monthDiff = today.getMonth() - birth.getMonth();
+    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birth.getDate())) age--;
+    return age;
+  };
+
+  const resetRegisterForm = () => {
+    setRegisterData({ registerType: '', email: '', password: '', phone: '', parentName: '', children: [{ name: '', gender: '', birthDate: '', school: '' }], adultName: '', adultGender: '', adultBirthDate: '' });
+    setShowRegistrationResult(false);
+    setRegisteredStudents([]);
+  };
+
+  const handleRegisterUser = async () => {
+    if (!registerData.email || !registerData.password || !registerData.phone) {
       alert('請填寫所有欄位！');
       return;
     }
-    alert('註冊成功！請使用新帳號登入。');
-    setIsRegisterOpen(false);
-    setRegisterData({ email: '', account: '', password: '', phone: '' });
-    setLoginMode('student');
-    setIsLoginOpen(true);
+
+    if (registerData.registerType === 'parent') {
+      if (!registerData.parentName) {
+        alert('請填寫家長姓名！');
+        return;
+      }
+      if (registerData.children.some(c => !c.name)) {
+        alert('請填寫所有小朋友的姓名！');
+        return;
+      }
+    } else if (registerData.registerType === 'adult') {
+      if (!registerData.adultName) {
+        alert('請填寫您的姓名！');
+        return;
+      }
+    }
+
+    // 0. 檢查 email 是否已有學員紀錄
+    const { data: existingStudent } = await supabase
+      .from('students')
+      .select('id')
+      .eq('email', registerData.email)
+      .limit(1);
+
+    if (existingStudent && existingStudent.length > 0) {
+      alert('此 Email 已有註冊紀錄，請直接登入或使用其他 Email');
+      return;
+    }
+
+    // 1. Supabase Auth 建立帳號
+    const displayName = registerData.registerType === 'parent' ? registerData.parentName : registerData.adultName;
+    const { data: authData, error: authError } = await supabase.auth.signUp({
+      email: registerData.email,
+      password: registerData.password,
+      options: {
+        data: {
+          parentName: displayName,
+          phone: registerData.phone,
+          registerType: registerData.registerType,
+        }
+      }
+    });
+
+    if (authError) {
+      alert('註冊失敗：' + authError.message);
+      return;
+    }
+
+    const authUid = authData.user?.id;
+    console.log('Auth user id:', authUid);
+
+    if (!authUid) {
+      alert('註冊失敗：無法取得用戶 ID');
+      return;
+    }
+
+    const results: {name: string, student_code: string}[] = [];
+
+    if (registerData.registerType === 'parent') {
+      // 2a. 家長模式：依序為每位小朋友建立 student 紀錄（確保連號）
+      for (const child of registerData.children) {
+        const age = child.birthDate ? calculateAge(child.birthDate) : 0;
+        const prefix = age >= 16 ? 'AD' : 'ST';
+        const ageType = age >= 16 ? 'adult' : 'child';
+
+        const { data: studentCode } = await supabase
+          .rpc('generate_student_code', { p_prefix: prefix });
+
+        const { data: studentData, error: studentError } = await supabase
+          .from('students')
+          .insert({
+            name: child.name,
+            gender: child.gender || null,
+            birth_date: child.birthDate || null,
+            phone: registerData.phone,
+            email: registerData.email,
+            emergency_contact: registerData.parentName,
+            emergency_phone: registerData.phone,
+            parent_uid: authUid,
+            notes: [
+              child.school ? `學校: ${child.school}` : '',
+            ].filter(Boolean).join('；'),
+            student_code: studentCode,
+            age_type: ageType,
+          })
+          .select('name, student_code')
+          .single();
+
+        if (studentError) {
+          console.error('學員建立失敗:', studentError);
+          alert('學員資料建立失敗：' + studentError.message);
+          return;
+        }
+
+        if (studentData) results.push(studentData);
+      }
+    } else {
+      // 2b. 成人模式：建立一筆成人 student 紀錄
+      const age = registerData.adultBirthDate ? calculateAge(registerData.adultBirthDate) : 18;
+      const prefix = age >= 16 ? 'AD' : 'ST';
+      const ageType = age >= 16 ? 'adult' : 'child';
+
+      const { data: studentCode } = await supabase
+        .rpc('generate_student_code', { p_prefix: prefix });
+
+      const { data: studentData, error: studentError } = await supabase
+        .from('students')
+        .insert({
+          name: registerData.adultName,
+          gender: registerData.adultGender || null,
+          birth_date: registerData.adultBirthDate || null,
+          phone: registerData.phone,
+          email: registerData.email,
+          emergency_contact: registerData.adultName,
+          emergency_phone: registerData.phone,
+          parent_uid: authUid,
+          student_code: studentCode,
+          age_type: ageType,
+        })
+        .select('name, student_code')
+        .single();
+
+      if (studentError) {
+        console.error('學員建立失敗:', studentError);
+        alert('學員資料建立失敗：' + studentError.message);
+        return;
+      }
+
+      if (studentData) results.push(studentData);
+    }
+
+    // 3. 顯示結果
+    setRegisteredStudents(results);
+    setShowRegistrationResult(true);
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
     setUserRole('user');
     setIsAdminLoggedIn(false);
     setActiveTab('home');
@@ -154,87 +417,67 @@ export default function App() {
   };
 
   const getRightAction = () => {
-    const avatarUrl = userRole === 'user' 
-      ? "https://images.unsplash.com/photo-1633332755192-727a05c4013d?w=100&h=100&fit=crop" // Generic user portrait
-      : (userRole === 'admin' || isAdminLoggedIn
-          ? "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=100&h=100&fit=crop" 
-          : "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop");
-
     return (
       <div className="flex items-center gap-2">
-        {activeTab === 'sessions' && (
-          <button className="p-2 hover:bg-neutral-100 rounded-full transition-colors hidden sm:block">
-            <History size={24} className="text-neutral-600" />
-          </button>
-        )}
-        
-        <div className="flex items-center gap-2">
-          {userRole === 'user' ? (
-            <div className="flex items-center gap-1 mr-1">
-              <button 
-                onClick={() => setIsRegisterOpen(true)}
-                className="text-sm font-medium text-neutral-600 hover:text-primary transition-colors px-3 py-1.5 rounded-lg hover:bg-neutral-100"
-              >
-                註冊
-              </button>
-              <button 
-                onClick={() => {
-                  setLoginMode('student');
-                  setIsLoginOpen(true);
-                }}
-                className="text-sm font-medium text-white bg-primary hover:bg-primary-hover transition-colors px-3 py-1.5 rounded-lg shadow-sm"
-              >
-                登入
-              </button>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2">
-              {userRole === 'admin' && (
-                <button 
-                  onClick={() => {
-                    setUserRole('student');
-                    setActiveTab('home');
-                  }}
-                  className="text-sm font-medium text-neutral-600 hover:text-primary transition-colors px-3 py-1.5 rounded-lg hover:bg-neutral-100"
-                >
-                  切換前端
-                </button>
-              )}
-              {userRole === 'student' && isAdminLoggedIn && (
-                <button 
-                  onClick={() => {
-                    setUserRole('admin');
-                    setActiveTab('admin-dashboard');
-                  }}
-                  className="text-sm font-medium text-neutral-600 hover:text-primary transition-colors px-3 py-1.5 rounded-lg hover:bg-neutral-100"
-                >
-                  切換後端
-                </button>
-              )}
-              <div className={`hidden sm:block px-2 py-1 rounded text-[10px] font-bold uppercase ${userRole === 'admin' ? 'bg-danger/10 text-danger' : 'bg-primary/10 text-primary'}`}>
-                {userRole === 'admin' ? 'Admin' : 'Student'}
-              </div>
-            </div>
-          )}
-          
-          <button 
-            onClick={() => {
-              if (userRole === 'user') {
+        {userRole === 'user' ? (
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setIsRegisterOpen(true)}
+              className="text-sm font-medium text-neutral-600 hover:text-primary transition-colors px-3 py-1.5 rounded-lg hover:bg-neutral-100"
+            >
+              註冊
+            </button>
+            <button
+              onClick={() => {
                 setLoginMode('student');
                 setIsLoginOpen(true);
-              } else {
-                handleLogout();
-              }
-            }}
-            className="w-10 h-10 rounded-2xl bg-neutral-100 border-2 border-white shadow-sm overflow-hidden transition-all active:scale-95 hover:border-primary/50 group relative"
-            title={userRole === 'user' ? '登入' : '登出'}
-          >
-            <img src={avatarUrl} alt="User" referrerPolicy="no-referrer" className="w-full h-full object-cover" />
-            <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-              {userRole === 'user' ? <LogIn size={16} className="text-white" /> : <LogOut size={16} className="text-white" />}
+              }}
+              className="text-sm font-medium text-white bg-primary hover:bg-blue-700 transition-colors px-3 py-1.5 rounded-lg shadow-sm"
+            >
+              登入
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2">
+            {userRole === 'admin' && (
+              <button
+                onClick={() => {
+                  setUserRole('student');
+                  setActiveTab('home');
+                }}
+                className="text-sm font-medium text-neutral-600 hover:text-primary transition-colors px-3 py-1.5 rounded-lg hover:bg-neutral-100"
+              >
+                切換前端
+              </button>
+            )}
+            {userRole === 'student' && isAdminLoggedIn && (
+              <button
+                onClick={() => {
+                  setUserRole('admin');
+                  setActiveTab('admin-dashboard');
+                }}
+                className="text-sm font-medium text-neutral-600 hover:text-primary transition-colors px-3 py-1.5 rounded-lg hover:bg-neutral-100"
+              >
+                切換後端
+              </button>
+            )}
+
+            <div className={`hidden sm:block px-2 py-1 rounded text-[10px] font-bold uppercase ${userRole === 'admin' ? 'bg-red-100 text-red-600' : 'bg-blue-100 text-blue-600'}`}>
+              {userRole === 'admin' ? 'Admin' : 'Student'}
             </div>
-          </button>
-        </div>
+
+            <span className="hidden sm:block text-sm text-neutral-600 max-w-[160px] truncate">
+              {userEmail}
+            </span>
+
+            <button
+              onClick={handleLogout}
+              className="text-sm font-medium text-red-500 hover:text-red-700 transition-colors px-3 py-1.5 rounded-lg hover:bg-red-50"
+            >
+              登出
+            </button>
+          </div>
+        )}
       </div>
     );
   };
@@ -268,10 +511,11 @@ export default function App() {
         return <SessionsPage courses={courses} userRole={userRole} waitlists={waitlists} />;
       case 'register': 
         return (
-          <RegisterPage 
+          <RegisterPage
             courses={courses}
-            initialCourseId={selectedCourseId} 
-            onComplete={handleComplete} 
+            initialCourseId={selectedCourseId}
+            onComplete={handleComplete}
+            onRefreshCourses={fetchCourses}
             userRole={userRole}
           />
         );
@@ -349,9 +593,9 @@ export default function App() {
           <div className="space-y-4">
             {loginStep === 1 ? (
               <>
-                <FormField label={loginMode === 'admin' ? '管理員帳號' : '學員帳號'}>
-                  <Input 
-                    placeholder="請輸入帳號" 
+                <FormField label={loginMode === 'admin' ? '管理員帳號' : 'Email'}>
+                  <Input
+                    placeholder="請輸入 Email" 
                     value={loginData.account}
                     onChange={e => setLoginData({...loginData, account: e.target.value})}
                   />
@@ -359,7 +603,7 @@ export default function App() {
                 <FormField label="密碼">
                   <Input 
                     type="password" 
-                    placeholder={`請輸入密碼 (a123)`}
+                    placeholder="請輸入密碼"
                     value={loginData.password}
                     onChange={e => setLoginData({...loginData, password: e.target.value})}
                   />
@@ -406,9 +650,12 @@ export default function App() {
       </BottomSheet>
 
       {/* Register Bottom Sheet */}
-      <BottomSheet 
-        isOpen={isRegisterOpen} 
-        onClose={() => setIsRegisterOpen(false)}
+      <BottomSheet
+        isOpen={isRegisterOpen}
+        onClose={() => {
+          setIsRegisterOpen(false);
+          resetRegisterForm();
+        }}
         title="註冊學員帳號"
       >
         <div className="space-y-6">
@@ -417,58 +664,263 @@ export default function App() {
               <User size={32} />
             </div>
             <div className="text-center">
-              <p className="text-lg font-bold text-neutral-900">
-                建立新帳號
-              </p>
+              <p className="text-lg font-bold text-neutral-900">建立新帳號</p>
               <p className="text-sm text-neutral-600">
-                請填寫以下資訊以完成註冊
+                {!registerData.registerType
+                  ? '請選擇您的身分'
+                  : registerData.registerType === 'parent'
+                    ? '請填寫家長資訊及小朋友資料'
+                    : '請填寫您的個人資料'}
               </p>
             </div>
           </div>
 
-          <div className="space-y-4">
-            <FormField label="電子信箱">
-              <Input 
-                type="email"
-                placeholder="請輸入電子信箱" 
-                value={registerData.email}
-                onChange={e => setRegisterData({...registerData, email: e.target.value})}
-              />
-            </FormField>
-            <FormField label="帳號">
-              <Input 
-                placeholder="請輸入帳號" 
-                value={registerData.account}
-                onChange={e => setRegisterData({...registerData, account: e.target.value})}
-              />
-            </FormField>
-            <FormField label="密碼">
-              <Input 
-                type="password" 
-                placeholder="請輸入密碼"
-                value={registerData.password}
-                onChange={e => setRegisterData({...registerData, password: e.target.value})}
-              />
-            </FormField>
-            <FormField label="電話">
-              <Input 
-                type="tel"
-                placeholder="請輸入聯絡電話"
-                value={registerData.phone}
-                onChange={e => setRegisterData({...registerData, phone: e.target.value})}
-              />
-            </FormField>
-          </div>
+          {showRegistrationResult ? (
+            <div className="space-y-4">
+              <div className="bg-green-50 rounded-xl p-4 text-center">
+                <p className="text-green-700 font-bold text-lg">註冊成功！</p>
+                <p className="text-green-600 text-sm mt-1">請記住以下學員編號</p>
+              </div>
 
-          <div className="flex flex-col gap-3">
-            <Button 
-              onClick={handleRegisterUser} 
-              icon={User}
-              variant="primary"
-            >
-              完成註冊
-            </Button>
-          </div>
+              {registeredStudents.map((student, index) => (
+                <div key={index} className="bg-white border-2 border-primary/20 rounded-xl p-4 flex items-center justify-between">
+                  <div>
+                    <p className="font-bold text-neutral-900">{student.name}</p>
+                    <p className="text-sm text-neutral-500">學員</p>
+                  </div>
+                  <div className="bg-primary/10 px-4 py-2 rounded-lg">
+                    <p className="font-bold text-primary text-lg">{student.student_code}</p>
+                  </div>
+                </div>
+              ))}
+
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
+                <p className="text-amber-800 text-sm text-center">
+                  學員編號為報名及管理的唯一識別碼，請妥善保存。
+                </p>
+              </div>
+
+              <div className="space-y-3 pt-2">
+                <Button
+                  variant="primary"
+                  onClick={() => {
+                    resetRegisterForm();
+                    setIsRegisterOpen(false);
+                    setLoginMode('student');
+                    setIsLoginOpen(true);
+                  }}
+                >
+                  前往登入
+                </Button>
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    resetRegisterForm();
+                    setIsRegisterOpen(false);
+                  }}
+                >
+                  返回首頁
+                </Button>
+              </div>
+            </div>
+          ) : !registerData.registerType ? (
+            /* 身分選擇 */
+            <div className="space-y-4">
+              <button
+                onClick={() => setRegisterData({...registerData, registerType: 'parent'})}
+                className="w-full bg-blue-50 hover:bg-blue-100 border-2 border-blue-200 rounded-2xl p-5 text-left transition-colors"
+              >
+                <p className="font-bold text-blue-900 text-lg">我是家長</p>
+                <p className="text-blue-600 text-sm mt-1">幫小朋友註冊學員帳號</p>
+              </button>
+              <button
+                onClick={() => setRegisterData({...registerData, registerType: 'adult'})}
+                className="w-full bg-green-50 hover:bg-green-100 border-2 border-green-200 rounded-2xl p-5 text-left transition-colors"
+              >
+                <p className="font-bold text-green-900 text-lg">我是成人學員</p>
+                <p className="text-green-600 text-sm mt-1">自己註冊學員帳號</p>
+              </button>
+            </div>
+          ) : registerData.registerType === 'parent' ? (
+            /* 家長模式 */
+            <div className="space-y-4">
+              <button
+                onClick={() => setRegisterData({...registerData, registerType: ''})}
+                className="text-sm text-neutral-500 hover:text-neutral-700"
+              >
+                &larr; 重新選擇身分
+              </button>
+
+              <div className="bg-neutral-50 rounded-xl p-4 space-y-3">
+                <p className="font-bold text-sm text-neutral-700">家長資訊</p>
+                <FormField label="家長姓名">
+                  <Input
+                    placeholder="請輸入家長姓名"
+                    value={registerData.parentName}
+                    onChange={e => setRegisterData({...registerData, parentName: e.target.value})}
+                  />
+                </FormField>
+                <FormField label="電子信箱">
+                  <Input
+                    type="email"
+                    placeholder="請輸入 Email（用於登入）"
+                    value={registerData.email}
+                    onChange={e => setRegisterData({...registerData, email: e.target.value})}
+                  />
+                </FormField>
+                <FormField label="密碼">
+                  <Input
+                    type="password"
+                    placeholder="請輸入密碼（至少6位）"
+                    value={registerData.password}
+                    onChange={e => setRegisterData({...registerData, password: e.target.value})}
+                  />
+                </FormField>
+                <FormField label="聯絡電話">
+                  <Input
+                    type="tel"
+                    placeholder="請輸入聯絡電話"
+                    value={registerData.phone}
+                    onChange={e => setRegisterData({...registerData, phone: e.target.value})}
+                  />
+                </FormField>
+              </div>
+
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="font-bold text-sm text-neutral-700">學員資料（小朋友）</p>
+                  <button
+                    onClick={addChild}
+                    className="text-sm font-medium text-primary hover:text-primary/80"
+                  >
+                    + 新增學員
+                  </button>
+                </div>
+
+                {registerData.children.map((child, index) => (
+                  <div key={index} className="bg-blue-50 rounded-xl p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm font-bold text-primary">學員 {index + 1}</p>
+                      {registerData.children.length > 1 && (
+                        <button onClick={() => removeChild(index)} className="text-sm text-red-500">移除</button>
+                      )}
+                    </div>
+                    <FormField label="姓名">
+                      <Input placeholder="小朋友姓名" value={child.name} onChange={e => updateChild(index, 'name', e.target.value)} />
+                    </FormField>
+                    <div className="flex gap-3">
+                      <div className="flex-1">
+                        <FormField label="性別">
+                          <div className="flex gap-2">
+                            {['男', '女', '不公開'].map(g => (
+                              <button
+                                key={g}
+                                type="button"
+                                onClick={() => updateChild(index, 'gender', g)}
+                                className={`flex-1 py-2 text-sm font-medium rounded-lg border transition-colors ${
+                                  child.gender === g ? 'bg-primary text-white border-primary' : 'bg-white text-neutral-600 border-neutral-300 hover:border-neutral-400'
+                                }`}
+                              >
+                                {g}
+                              </button>
+                            ))}
+                          </div>
+                        </FormField>
+                      </div>
+                      <div className="flex-1">
+                        <FormField label="出生日期">
+                          <Input type="date" value={child.birthDate} onChange={e => updateChild(index, 'birthDate', e.target.value)} />
+                        </FormField>
+                      </div>
+                    </div>
+                    <FormField label="就讀學校">
+                      <Input placeholder="例如：頭湖國小" value={child.school} onChange={e => updateChild(index, 'school', e.target.value)} />
+                    </FormField>
+                  </div>
+                ))}
+              </div>
+
+              <Button onClick={handleRegisterUser} icon={User} variant="primary">
+                完成註冊
+              </Button>
+            </div>
+          ) : (
+            /* 成人模式 */
+            <div className="space-y-4">
+              <button
+                onClick={() => setRegisterData({...registerData, registerType: ''})}
+                className="text-sm text-neutral-500 hover:text-neutral-700"
+              >
+                &larr; 重新選擇身分
+              </button>
+
+              <div className="bg-green-50 rounded-xl p-4 space-y-3">
+                <p className="text-sm font-bold text-green-700">學員資料</p>
+                <FormField label="姓名">
+                  <Input
+                    placeholder="請輸入姓名"
+                    value={registerData.adultName}
+                    onChange={e => setRegisterData({...registerData, adultName: e.target.value})}
+                  />
+                </FormField>
+                <FormField label="性別">
+                  <div className="flex gap-2">
+                    {['男', '女', '不公開'].map(g => (
+                      <button
+                        key={g}
+                        type="button"
+                        onClick={() => setRegisterData({...registerData, adultGender: g})}
+                        className={`flex-1 py-2 text-sm font-medium rounded-lg border transition-colors ${
+                          registerData.adultGender === g ? 'bg-primary text-white border-primary' : 'bg-white text-neutral-600 border-neutral-300 hover:border-neutral-400'
+                        }`}
+                      >
+                        {g}
+                      </button>
+                    ))}
+                  </div>
+                </FormField>
+                <FormField label="出生日期（選填）">
+                  <Input
+                    type="date"
+                    value={registerData.adultBirthDate}
+                    onChange={e => setRegisterData({...registerData, adultBirthDate: e.target.value})}
+                  />
+                </FormField>
+              </div>
+
+              <div className="bg-neutral-50 rounded-xl p-4 space-y-3">
+                <p className="font-bold text-sm text-neutral-700">帳號資訊</p>
+                <FormField label="電子信箱">
+                  <Input
+                    type="email"
+                    placeholder="請輸入 Email（用於登入）"
+                    value={registerData.email}
+                    onChange={e => setRegisterData({...registerData, email: e.target.value})}
+                  />
+                </FormField>
+                <FormField label="密碼">
+                  <Input
+                    type="password"
+                    placeholder="請輸入密碼（至少6位）"
+                    value={registerData.password}
+                    onChange={e => setRegisterData({...registerData, password: e.target.value})}
+                  />
+                </FormField>
+                <FormField label="聯絡電話">
+                  <Input
+                    type="tel"
+                    placeholder="請輸入聯絡電話"
+                    value={registerData.phone}
+                    onChange={e => setRegisterData({...registerData, phone: e.target.value})}
+                  />
+                </FormField>
+              </div>
+
+              <Button onClick={handleRegisterUser} icon={User} variant="primary">
+                完成註冊
+              </Button>
+            </div>
+          )}
         </div>
       </BottomSheet>
     </>

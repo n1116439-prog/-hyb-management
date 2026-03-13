@@ -36,6 +36,9 @@ export interface Course {
   changeLogs?: CourseChangeLog[];
   dates?: string[];
   attendance?: { [date: string]: AttendanceRecord };
+  lastClassDate?: string;
+  hasAttendance?: boolean;
+  needsAttendance?: boolean;
 }
 
 export interface WaitlistEntry {

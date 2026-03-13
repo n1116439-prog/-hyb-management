@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { User, Phone, MessageSquare, AlertCircle, CheckCircle2, Plus, Trash2 } from 'lucide-react';
 import { Button, FormField, Input, Select } from './UI';
+import { supabase } from '../lib/supabase';
 import { Course } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -42,21 +43,56 @@ export const WaitlistForm: React.FC<WaitlistFormProps> = ({ course, onSubmit, on
     setFormData({ ...formData, students: newStudents });
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // Simulate API call
+
+    // 先查找或新增學員
+    const { data: existingStudent } = await supabase
+      .from('students')
+      .select('id')
+      .eq('phone', formData.phone)
+      .single()
+
+    let studentId = existingStudent?.id
+
+    if (!studentId) {
+      // 候補表單沒有生日欄位，預設為成人 (AD)
+      const { data: studentCode } = await supabase
+        .rpc('generate_student_code', { p_prefix: 'AD' });
+
+      const { data: newStudent } = await supabase
+        .from('students')
+        .insert({
+          name: formData.contactName || formData.students?.[0]?.name || '',
+          phone: formData.phone,
+          student_code: studentCode,
+          age_type: 'adult',
+        })
+        .select('id')
+        .single()
+      studentId = newStudent?.id
+    }
+
+    // 寫入候補紀錄
+    if (studentId) {
+      await supabase.from('enrollments').insert({
+        student_id: studentId,
+        course_id: course.id,
+        status: '候補',
+        notes: formData.note || '',
+      })
+    }
+
+    setIsSubmitted(true);
     setTimeout(() => {
-      setIsSubmitted(true);
-      setTimeout(() => {
-        onSubmit({
-          ...formData,
-          courseId: course.id,
-          courseName: course.name,
-          date: new Date().toLocaleDateString(),
-          status: 'waiting'
-        });
-      }, 1500);
-    }, 800);
+      onSubmit({
+        ...formData,
+        courseId: course.id,
+        courseName: course.name,
+        date: new Date().toLocaleDateString(),
+        status: 'waiting'
+      });
+    }, 1500);
   };
 
   if (isSubmitted) {

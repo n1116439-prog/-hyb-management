@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Users, 
   Calendar, 
@@ -23,9 +23,85 @@ import {
 } from 'recharts';
 import { motion } from 'motion/react';
 import { Badge, Button } from './UI';
-import { ADMIN_STATS, TREND_DATA, RECENT_REGISTRATIONS, TODAY_SCHEDULE } from '../constants';
+import { supabase } from '../lib/supabase';
 
 export const AdminDashboard: React.FC = () => {
+  const [stats, setStats] = useState({
+    totalStudents: 0,
+    totalStudentsGrowth: 0,
+    todayCourses: 0,
+    todayCoursesStatus: '載入中',
+    monthlyRevenue: 0,
+    monthlyRevenueGrowth: 0,
+    averageAttendance: 0,
+    averageAttendanceTrend: 0,
+  })
+  const [trendData, setTrendData] = useState<{month: string, count: number}[]>([])
+  const [recentRegistrations, setRecentRegistrations] = useState<any[]>([])
+  const [todaySchedule, setTodaySchedule] = useState<any[]>([])
+
+  useEffect(() => {
+    const fetchDashboard = async () => {
+      // 總學員數
+      const { count: studentCount } = await supabase
+        .from('students')
+        .select('id', { count: 'exact', head: true })
+
+      // 本月營收
+      const now = new Date()
+      const firstDay = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`
+      const { data: payments } = await supabase
+        .from('payments')
+        .select('amount')
+        .gte('payment_date', firstDay)
+      const monthlyRevenue = payments?.reduce((sum, p) => sum + (p.amount || 0), 0) || 0
+
+      // 今日課程（根據今天星期幾）
+      const weekdays = ['週日', '週一', '週二', '週三', '週四', '週五', '週六']
+      const todayWeekday = weekdays[now.getDay()]
+      const { data: todayCourses } = await supabase
+        .from('courses')
+        .select('*, coaches(name), venues(name)')
+        .eq('day_of_week', todayWeekday)
+
+      // 最近報名
+      const { data: recentEnrollments } = await supabase
+        .from('enrollments')
+        .select('*, students(name), courses(name)')
+        .order('enrolled_at', { ascending: false })
+        .limit(5)
+
+      setStats({
+        totalStudents: studentCount || 0,
+        totalStudentsGrowth: 0,
+        todayCourses: todayCourses?.length || 0,
+        todayCoursesStatus: '穩定',
+        monthlyRevenue,
+        monthlyRevenueGrowth: 0,
+        averageAttendance: 0,
+        averageAttendanceTrend: 0,
+      })
+
+      setTodaySchedule((todayCourses || []).map(c => ({
+        id: c.id,
+        time: c.start_time?.slice(0, 5) || '',
+        name: c.name,
+        coaches: c.coaches ? [c.coaches.name] : [],
+        location: c.venues?.name || '',
+        status: 'pending',
+      })))
+
+      setRecentRegistrations((recentEnrollments || []).map(e => ({
+        id: e.id,
+        name: e.students?.name || '未知',
+        course: e.courses?.name || '未知',
+        type: 'official',
+        time: e.enrolled_at ? new Date(e.enrolled_at).toLocaleDateString('zh-TW') : '',
+      })))
+    }
+    fetchDashboard()
+  }, [])
+
   return (
     <div className="space-y-8 pb-12">
       {/* Header */}
@@ -66,22 +142,22 @@ export const AdminDashboard: React.FC = () => {
         />
         <StatCard 
           label="總學員數" 
-          value={ADMIN_STATS.totalStudents.toString()} 
-          growth={ADMIN_STATS.totalStudentsGrowth} 
+          value={stats.totalStudents.toString()} 
+          growth={stats.totalStudentsGrowth} 
           icon={<Users className="text-secondary" size={24} />} 
           onClick={() => window.dispatchEvent(new CustomEvent('change-tab', { detail: 'admin-students' }))}
         />
         <StatCard 
           label="本月營收" 
-          value={`NT$ ${ADMIN_STATS.monthlyRevenue / 1000}K`} 
-          growth={ADMIN_STATS.monthlyRevenueGrowth} 
+          value={`NT$ ${stats.monthlyRevenue / 1000}K`} 
+          growth={stats.monthlyRevenueGrowth} 
           icon={<DollarSign className="text-emerald-500" size={24} />} 
           onClick={() => window.dispatchEvent(new CustomEvent('change-tab', { detail: 'admin-revenue' }))}
         />
         <StatCard 
           label="平均出席率" 
-          value={`${ADMIN_STATS.averageAttendance}%`} 
-          growth={ADMIN_STATS.averageAttendanceTrend} 
+          value={`${stats.averageAttendance}%`} 
+          growth={stats.averageAttendanceTrend} 
           icon={<TrendingUp className="text-orange-500" size={24} />} 
           onClick={() => window.dispatchEvent(new CustomEvent('change-tab', { detail: 'admin-attendance' }))}
         />
@@ -109,7 +185,7 @@ export const AdminDashboard: React.FC = () => {
           </div>
           <div className="h-[300px] w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={TREND_DATA}>
+              <LineChart data={trendData}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
                 <XAxis 
                   dataKey="month" 
@@ -158,10 +234,10 @@ export const AdminDashboard: React.FC = () => {
             </button>
           </div>
           <div className="space-y-6">
-            {TODAY_SCHEDULE.map((item, idx) => (
+            {todaySchedule.map((item, idx) => (
               <div key={item.id} className="relative pl-8 pb-6 last:pb-0">
                 {/* Timeline Line */}
-                {idx !== TODAY_SCHEDULE.length - 1 && (
+                {idx !== todaySchedule.length - 1 && (
                   <div className="absolute left-[11px] top-6 bottom-0 w-0.5 bg-neutral-100" />
                 )}
                 {/* Timeline Dot */}
@@ -213,7 +289,7 @@ export const AdminDashboard: React.FC = () => {
             </div>
           </div>
           <div className="space-y-6">
-            {RECENT_REGISTRATIONS.map(reg => (
+            {recentRegistrations.map(reg => (
               <div key={reg.id} className="flex items-center justify-between p-4 rounded-2xl hover:bg-neutral-50 transition-colors cursor-pointer">
                 <div className="flex items-center gap-4">
                   <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-lg">

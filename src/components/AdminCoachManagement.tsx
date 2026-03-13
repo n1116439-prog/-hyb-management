@@ -1,30 +1,54 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Plus, Search, Filter, MoreHorizontal, Edit2, Trash2, Mail, Phone, User, Star, MapPin } from 'lucide-react';
 import { motion } from 'motion/react';
 import { Button, Input, Badge, FormField } from './UI';
+import { supabase } from '../lib/supabase';
 
 export const AdminCoachManagement: React.FC = () => {
-  const [coaches, setCoaches] = useState([
-    { id: '1', name: '王教練', phone: '0912-345-678', email: 'wang@example.com', specialties: ['兒童體適能', '初階羽球'], rating: 4.8, status: 'active' },
-    { id: '2', name: '李教練', phone: '0923-456-789', email: 'lee@example.com', specialties: ['進階單打', '成人班'], rating: 4.9, status: 'active' },
-    { id: '3', name: '陳教練', phone: '0934-567-890', email: 'chen@example.com', specialties: ['雙打戰術', '選手培訓'], rating: 4.7, status: 'active' },
-  ]);
+  const [coaches, setCoaches] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+
+  const fetchCoaches = async () => {
+    setLoading(true)
+    const { data } = await supabase
+      .from('coaches')
+      .select('*')
+      .order('name')
+    if (data) {
+      setCoaches(data.map(c => ({
+        id: c.id,
+        name: c.name,
+        phone: c.phone || '',
+        email: c.email || '',
+        specialties: c.specialization ? c.specialization.split(',').map((s: string) => s.trim()) : [],
+        rating: 0,
+        status: c.is_active ? 'active' : 'inactive',
+      })))
+    }
+    setLoading(false)
+  }
+
+  useEffect(() => {
+    fetchCoaches()
+  }, [])
+
   const [showAddModal, setShowAddModal] = useState(false);
   const [newCoach, setNewCoach] = useState({ name: '', phone: '', email: '', specialties: '' });
 
-  const handleAddCoach = () => {
-    if (!newCoach.name) return;
-    setCoaches([...coaches, {
-      id: Date.now().toString(),
+  const handleAddCoach = async () => {
+    if (!newCoach.name) return
+    const { error } = await supabase.from('coaches').insert({
       name: newCoach.name,
       phone: newCoach.phone,
       email: newCoach.email,
-      specialties: newCoach.specialties.split(',').map(s => s.trim()),
-      rating: 5.0,
-      status: 'active'
-    }]);
-    setShowAddModal(false);
-    setNewCoach({ name: '', phone: '', email: '', specialties: '' });
+      specialization: newCoach.specialties,
+      is_active: true,
+    })
+    if (!error) {
+      await fetchCoaches()
+      setShowAddModal(false)
+      setNewCoach({ name: '', phone: '', email: '', specialties: '' })
+    }
   };
 
   return (
