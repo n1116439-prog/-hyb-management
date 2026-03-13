@@ -246,9 +246,22 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
 
         if (!courseEnrollments || courseEnrollments.length === 0) continue
 
-        const attendanceInserts = courseEnrollments.map(e => ({
+        // 過濾有堂數的學員
+        const enrolledStudentIds = courseEnrollments.map(e => e.student_id)
+        const { data: validCredits } = await supabase
+          .from('credits')
+          .select('student_id')
+          .in('student_id', enrolledStudentIds)
+          .eq('status', 'active')
+          .gt('remaining_credits', 0)
+
+        const validStudentIds = validCredits?.map(c => c.student_id) || []
+        if (validStudentIds.length === 0) continue
+
+        // 只對有堂數的學員自動點名
+        const attendanceInserts = validStudentIds.map(sid => ({
           course_id: course.id,
-          student_id: e.student_id,
+          student_id: sid,
           date: dateStr,
           status: '出席',
           deducted: true,
@@ -550,21 +563,74 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
   };
 
   const fetchCourseAttendance = async (courseId: string, date: string) => {
+    // 1. 讀取該課程已報名的學員（含學員資料）
     const { data: enrollments } = await supabase
       .from('enrollments')
-      .select('*, students(id, name, student_number, category)')
+      .select('*, students(id, name, student_number, student_code, category)')
       .eq('course_id', courseId)
       .eq('status', '已報名')
 
-    if (enrollments) {
-      setCourseStudents(enrollments.map((e: any) => ({
-        id: e.students?.id,
-        name: e.students?.name,
-        studentNumber: e.students?.student_number,
-        category: e.students?.category,
-      })).filter((s: any) => s.id))
+    if (!enrollments) {
+      setCourseStudents([])
+      return
     }
 
+    // 2. 讀取每位學員的堂數資料
+    const studentIds = enrollments.map((e: any) => e.students?.id).filter(Boolean)
+
+    const { data: allCredits } = await supabase
+      .from('credits')
+      .select('*')
+      .in('student_id', studentIds)
+      .eq('status', 'active')
+
+    // 3. 過濾：只保留有堂數且堂數 > 0 的學員
+    const validStudents = enrollments
+      .map((e: any) => {
+        const studentId = e.students?.id
+        if (!studentId) return null
+
+        // 找到該學員對應這門課的 credits
+        const courseCredit = allCredits?.find((c: any) => c.student_id === studentId && c.course_id === courseId)
+        // 如果沒有對應這門課的，找通用的
+        const generalCredit = allCredits?.find((c: any) => c.student_id === studentId && !c.course_id)
+        const credit = courseCredit || generalCredit
+
+        // 沒有堂數或堂數用完 → 不顯示
+        if (!credit || credit.remaining_credits <= 0) return null
+
+        // 檢查是否過期
+        if (credit.expiry_date && new Date(credit.expiry_date) < new Date()) return null
+
+        // 判斷課程類型
+        let courseType: 'official' | 'trial' | 'makeup' = 'official'
+        if (credit.total_credits === 1) {
+          courseType = 'trial'
+        }
+        // 如果這個 credit 的 course_id 不是當前課程，表示是從其他班來補課
+        if (credit.course_id && credit.course_id !== courseId) {
+          courseType = 'makeup'
+        }
+
+        return {
+          id: studentId,
+          name: e.students?.name,
+          studentNumber: e.students?.student_code || e.students?.student_number || '',
+          category: e.students?.category,
+          courseType,
+          remainingCredits: credit.remaining_credits,
+          totalCredits: credit.total_credits,
+          leaveCount: credit.leave_count || 0,
+          maxLeave: credit.max_leave || 0,
+          expiryDate: credit.expiry_date,
+          creditId: credit.id,
+        }
+      })
+      .filter(Boolean)
+
+    setCourseStudents(validStudents)
+
+    // 4. 讀取該日期已有的點名紀錄
     const { data: existing } = await supabase
       .from('attendance')
       .select('*')
@@ -574,14 +640,16 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
     if (existing) {
       setExistingAttendance(existing)
       const records: Record<string, string> = {}
-      existing.forEach((a: any) => { records[a.student_id] = a.status })
+      existing.forEach((a: any) => {
+        records[a.student_id] = a.status
+      })
       setAttendanceRecords(records)
     } else {
       setAttendanceRecords({})
       setExistingAttendance([])
     }
 
-    // 讀取所有其他課程（供補課選擇）
+    // 5. 讀取所有課程（補課選擇用）
     const { data: allCoursesData } = await supabase
       .from('courses')
       .select('id, name')
@@ -589,21 +657,7 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
       .eq('status', '招生中')
     if (allCoursesData) setAllCoursesList(allCoursesData)
 
-    // 讀取每位學員的 credits 資訊
-    const creditInfoMap: Record<string, any> = {}
-    for (const e of (enrollments || [])) {
-      const { data: credit } = await supabase
-        .from('credits')
-        .select('leave_count, max_leave, remaining_credits, total_credits, expiry_date, status')
-        .eq('student_id', e.students?.id)
-        .eq('course_id', courseId)
-        .single()
-      if (credit && e.students?.id) {
-        creditInfoMap[e.students.id] = credit
-      }
-    }
-    setStudentCreditInfo(creditInfoMap)
-
+    // 6. 讀取歷史點名紀錄
     const { data: history } = await supabase
       .from('attendance')
       .select('date, status, students(name, student_number)')
@@ -1345,34 +1399,38 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
                                       {student.name?.charAt(0)}
                                     </div>
                                     <div>
-                                      <p className="font-medium text-sm">{student.name}</p>
-                                      <p className="text-xs text-neutral-500">{student.studentNumber}</p>
-                                      {studentCreditInfo[student.id] && (
-                                        <div className="flex gap-2 mt-1">
-                                          <span className="text-xs text-neutral-500">
-                                            剩餘 {studentCreditInfo[student.id].remaining_credits}/{studentCreditInfo[student.id].total_credits} 堂
+                                      <div className="flex items-center gap-2">
+                                        <p className="font-medium text-sm">{student.name}</p>
+                                        <span className="text-xs text-neutral-500">{student.studentNumber}</span>
+                                        <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${
+                                          student.courseType === 'trial' ? 'bg-orange-100 text-orange-600' :
+                                          student.courseType === 'makeup' ? 'bg-purple-100 text-purple-600' :
+                                          'bg-blue-100 text-blue-600'
+                                        }`}>
+                                          {student.courseType === 'trial' ? '試上' : student.courseType === 'makeup' ? '補課' : '正式'}
+                                        </span>
+                                      </div>
+                                      <div className="flex gap-2 mt-0.5">
+                                        <span className="text-xs text-neutral-500">
+                                          剩餘 {student.remainingCredits}/{student.totalCredits} 堂
+                                        </span>
+                                        {student.leaveCount > 0 && (
+                                          <span className={`text-xs ${
+                                            student.leaveCount >= student.maxLeave ? 'text-red-500 font-bold' : 'text-yellow-600'
+                                          }`}>
+                                            請假 {student.leaveCount}/{student.maxLeave}
+                                            {student.leaveCount >= student.maxLeave && ' ⚠️'}
                                           </span>
-                                          {studentCreditInfo[student.id].leave_count > 0 && (
-                                            <span className={`text-xs ${
-                                              studentCreditInfo[student.id].leave_count >= studentCreditInfo[student.id].max_leave
-                                                ? 'text-red-500 font-bold'
-                                                : 'text-yellow-600'
-                                            }`}>
-                                              請假 {studentCreditInfo[student.id].leave_count}/{studentCreditInfo[student.id].max_leave} 次
-                                              {studentCreditInfo[student.id].leave_count >= studentCreditInfo[student.id].max_leave && ' ⚠️ 需補課'}
-                                            </span>
-                                          )}
-                                          {studentCreditInfo[student.id].expiry_date && (
-                                            <span className={`text-xs ${
-                                              new Date(studentCreditInfo[student.id].expiry_date) < new Date(Date.now() + 14 * 24 * 60 * 60 * 1000)
-                                                ? 'text-red-500'
-                                                : 'text-neutral-400'
-                                            }`}>
-                                              到期 {studentCreditInfo[student.id].expiry_date}
-                                            </span>
-                                          )}
-                                        </div>
-                                      )}
+                                        )}
+                                        {student.expiryDate && (
+                                          <span className={`text-xs ${
+                                            new Date(student.expiryDate) < new Date(Date.now() + 14 * 24 * 60 * 60 * 1000)
+                                              ? 'text-red-500' : 'text-neutral-400'
+                                          }`}>
+                                            到期 {student.expiryDate}
+                                          </span>
+                                        )}
+                                      </div>
                                     </div>
                                   </div>
                                 </div>
@@ -1445,8 +1503,8 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
                           </div>
                         ) : (
                           <div className="text-center py-8 text-neutral-500">
-                            <p>此課程尚無已報名學員</p>
-                            <p className="text-sm mt-1">請先在「學員名單」tab 匯入學員</p>
+                            <p>此課程沒有已購買堂數的學員</p>
+                            <p className="text-sm mt-1">學員需要先在前端購買堂數，才會出現在點名表</p>
                           </div>
                         )}
 
@@ -1691,15 +1749,6 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
                           </div>
                         </div>
 
-                        <FormField label="單堂價格">
-                          <Input
-                            type="number"
-                            placeholder="0"
-                            value={newCourseData.price || ''}
-                            onChange={e => setNewCourseData((prev: any) => ({ ...prev, price: parseInt(e.target.value) || 0 }))}
-                          />
-                        </FormField>
-
                         <FormField label="課程說明（選填）">
                           <textarea
                             placeholder="課程介紹..."
@@ -1844,10 +1893,6 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
                             <div className="flex justify-between">
                               <span className="text-neutral-500">名額上限</span>
                               <span className="font-medium">{newCourseData.maxEnrollment || 24} 人</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-neutral-500">單堂價格</span>
-                              <span className="font-medium">NT$ {newCourseData.price || 0}</span>
                             </div>
                             <div className="flex justify-between">
                               <span className="text-neutral-500">教練</span>

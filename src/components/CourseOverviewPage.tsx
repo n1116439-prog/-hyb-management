@@ -29,12 +29,13 @@ const TODAY_SCHEDULE = [
   { time: '19:00', name: '永和 [永平國小] 羽球班', coaches: ['陳教練', '李教練'], room: '體育館', status: '待開始' },
 ];
 
-export const CourseOverviewPage: React.FC<{ 
+export const CourseOverviewPage: React.FC<{
   courses: Course[];
-  onRegister: (courseId: string) => void; 
+  onRegister: (courseId: string) => void;
   userRole: 'user' | 'admin' | 'student';
   onJoinWaitlist: (entry: Omit<WaitlistEntry, 'id'>) => void;
-}> = ({ courses, onRegister, userRole, onJoinWaitlist }) => {
+  userCategory?: 'child' | 'adult' | '';
+}> = ({ courses, onRegister, userRole, onJoinWaitlist, userCategory }) => {
   const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
   const [waitlistCourse, setWaitlistCourse] = useState<Course | null>(null);
   const [activeFilter, setActiveFilter] = useState('全部');

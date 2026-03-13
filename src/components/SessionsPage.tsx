@@ -8,9 +8,10 @@ interface SessionsPageProps {
   courses: Course[];
   userRole: 'user' | 'admin' | 'student';
   waitlists: WaitlistEntry[];
+  userCategory?: 'child' | 'adult' | '';
 }
 
-export function SessionsPage({ courses, userRole, waitlists }: SessionsPageProps) {
+export function SessionsPage({ courses, userRole, waitlists, userCategory }: SessionsPageProps) {
   const [studentCredits, setStudentCredits] = useState<{
     id: string
     name: string
@@ -26,6 +27,7 @@ export function SessionsPage({ courses, userRole, waitlists }: SessionsPageProps
       time: string
       location: string
       enrolledAt: string
+      nextClassDate: string
     }[]
   }[]>([])
   const [expandedStudentId, setExpandedStudentId] = useState<string | null>(null)
@@ -56,16 +58,39 @@ export function SessionsPage({ courses, userRole, waitlists }: SessionsPageProps
           totalCredits: credit?.total_credits || 0,
           usedCredits: credit?.used_credits || 0,
           remainingCredits: credit?.remaining_credits || 0,
-          courses: studentEnrollments.map((e: any) => ({
-            id: e.id,
-            courseName: e.courses?.name || '未知',
-            schedule: e.courses?.day_of_week || '',
-            time: e.courses?.start_time && e.courses?.end_time
-              ? `${e.courses.start_time.slice(0, 5)}-${e.courses.end_time.slice(0, 5)}`
-              : '',
-            location: e.courses?.venues?.name || '',
-            enrolledAt: e.enrolled_at || '',
-          })),
+          courses: studentEnrollments.map((e: any) => {
+            // 計算下次上課日
+            const weekdayMap: Record<string, number> = {
+              '週日': 0, '週一': 1, '週二': 2, '週三': 3,
+              '週四': 4, '週五': 5, '週六': 6
+            }
+            const targetDay = weekdayMap[e.courses?.day_of_week || '']
+            let nextClassDate = ''
+            if (targetDay !== undefined) {
+              const today = new Date()
+              today.setHours(0, 0, 0, 0)
+              const next = new Date(today)
+              // 如果今天不是上課日，往前推到下一個上課日
+              if (next.getDay() !== targetDay) {
+                while (next.getDay() !== targetDay) {
+                  next.setDate(next.getDate() + 1)
+                }
+              }
+              nextClassDate = `${next.getFullYear()}/${String(next.getMonth() + 1).padStart(2, '0')}/${String(next.getDate()).padStart(2, '0')}`
+            }
+
+            return {
+              id: e.id,
+              courseName: e.courses?.name || '未知',
+              schedule: e.courses?.day_of_week || '',
+              time: e.courses?.start_time && e.courses?.end_time
+                ? `${e.courses.start_time.slice(0, 5)}-${e.courses.end_time.slice(0, 5)}`
+                : '',
+              location: e.courses?.venues?.name || '',
+              enrolledAt: e.enrolled_at || '',
+              nextClassDate,
+            }
+          }),
         }
       }))
     }
@@ -174,6 +199,9 @@ export function SessionsPage({ courses, userRole, waitlists }: SessionsPageProps
                           <p className="font-medium text-neutral-900">{course.courseName}</p>
                           <p className="text-sm text-neutral-500">
                             {course.schedule} {course.time} · {course.location}
+                          </p>
+                          <p className="text-xs text-primary mt-1">
+                            下次上課：{course.nextClassDate || '未定'}
                           </p>
                         </div>
                         <span className="text-xs bg-green-50 text-green-600 px-2 py-1 rounded-full">進行中</span>

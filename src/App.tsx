@@ -49,12 +49,13 @@ export default function App() {
     children: [{ name: '', gender: '', birthDate: '', school: '' }],
     adultName: '', adultGender: '', adultBirthDate: '',
   });
-  const [registeredStudents, setRegisteredStudents] = useState<{name: string, student_code: string}[]>([]);
+  const [registeredStudents, setRegisteredStudents] = useState<{name: string, student_code: string, student_number: string}[]>([]);
   const [showRegistrationResult, setShowRegistrationResult] = useState(false);
   const [loginStep, setLoginStep] = useState<1 | 2>(1);
   const [verifyCode, setVerifyCode] = useState('');
   const [isSendingCode, setIsSendingCode] = useState(false);
   const [userEmail, setUserEmail] = useState<string>('');
+  const [userCategory, setUserCategory] = useState<'child' | 'adult' | ''>('');
 
   useEffect(() => {
     const handleOpenLogin = () => {
@@ -83,6 +84,15 @@ export default function App() {
       if (session) {
         setUserRole('student');
         setUserEmail(session.user.email || '');
+
+        // 查詢用戶類型
+        const { data: myStudents } = await supabase
+          .from('students')
+          .select('category')
+          .eq('parent_uid', session.user.id);
+        if (myStudents && myStudents.length > 0) {
+          setUserCategory(myStudents.some(s => s.category === 'adult') ? 'adult' : 'child');
+        }
       }
     };
     checkSession();
@@ -121,7 +131,7 @@ export default function App() {
       setCourses(coursesData.map(c => ({
         id: c.id,
         name: c.name,
-        category: c.category === '兒童班' ? 'children' : 'adult',
+        category: (c.category === '成人班' || c.category === 'adult') ? 'adult' : 'children',
         schedule: c.day_of_week,
         time: `${c.start_time?.slice(0,5)} – ${c.end_time?.slice(0,5)}`,
         location: c.venues?.name || '',
@@ -190,6 +200,22 @@ export default function App() {
     // 管理員登入判斷：暫時用帳號 a11 判斷
     if (loginMode === 'admin') {
       if (loginData.account === 'a11' && loginData.password === 'a11') {
+        // 寫入 user_roles（如果不存在）
+        const { data: existingRole } = await supabase
+          .from('user_roles')
+          .select('id')
+          .eq('role', 'super_admin')
+          .single();
+
+        if (!existingRole) {
+          await supabase.from('user_roles').insert({
+            user_id: '00000000-0000-0000-0000-000000000000',
+            role: 'super_admin',
+            name: 'Admin',
+            email: 'admin',
+          });
+        }
+
         setUserRole('admin');
         setIsAdminLoggedIn(true);
         setActiveTab('admin-dashboard');
@@ -214,6 +240,16 @@ export default function App() {
       }
       setUserRole('student');
       setUserEmail(loginData.account);
+
+      // 查詢用戶類型
+      const { data: myStudents } = await supabase
+        .from('students')
+        .select('category')
+        .eq('parent_uid', data.user?.id);
+      if (myStudents && myStudents.length > 0) {
+        setUserCategory(myStudents.some(s => s.category === 'adult') ? 'adult' : 'child');
+      }
+
       setIsLoginOpen(false);
       setLoginData({ account: '', password: '' });
     }
@@ -317,7 +353,35 @@ export default function App() {
       return;
     }
 
-    const results: {name: string, student_code: string}[] = [];
+    const results: {name: string, student_code: string, student_number: string}[] = [];
+
+    // 建立家庭群組
+    let familyId = null;
+    if (registerData.registerType === 'parent') {
+      const { data: familyData } = await supabase
+        .from('families')
+        .insert({
+          parent_auth_uid: authUid,
+          parent_name: registerData.parentName,
+          phone: registerData.phone,
+          email: registerData.email,
+        })
+        .select('id')
+        .single();
+      familyId = familyData?.id;
+    } else if (registerData.registerType === 'adult') {
+      const { data: familyData } = await supabase
+        .from('families')
+        .insert({
+          parent_auth_uid: authUid,
+          parent_name: registerData.adultName,
+          phone: registerData.phone,
+          email: registerData.email,
+        })
+        .select('id')
+        .single();
+      familyId = familyData?.id;
+    }
 
     if (registerData.registerType === 'parent') {
       // 2a. 家長模式：依序為每位小朋友建立 student 紀錄（確保連號）
@@ -329,7 +393,7 @@ export default function App() {
         const { data: studentCode } = await supabase
           .rpc('generate_student_code', { p_prefix: prefix });
 
-        const { data: studentData, error: studentError } = await supabase
+        const { data: insertedData, error: studentError } = await supabase
           .from('students')
           .insert({
             name: child.name,
@@ -340,13 +404,15 @@ export default function App() {
             emergency_contact: registerData.parentName,
             emergency_phone: registerData.phone,
             parent_uid: authUid,
+            family_id: familyId,
             notes: [
               child.school ? `學校: ${child.school}` : '',
             ].filter(Boolean).join('；'),
             student_code: studentCode,
             age_type: ageType,
+            category: ageType === 'adult' ? 'adult' : 'child',
           })
-          .select('name, student_code')
+          .select('id')
           .single();
 
         if (studentError) {
@@ -355,7 +421,16 @@ export default function App() {
           return;
         }
 
-        if (studentData) results.push(studentData);
+        // 重新查詢以取得 trigger 產生的 student_number
+        if (insertedData) {
+          const { data: studentWithNumber } = await supabase
+            .from('students')
+            .select('name, student_code, student_number')
+            .eq('id', insertedData.id)
+            .single();
+          console.log('學員編號:', studentWithNumber);
+          if (studentWithNumber) results.push(studentWithNumber);
+        }
       }
     } else {
       // 2b. 成人模式：建立一筆成人 student 紀錄
@@ -366,7 +441,7 @@ export default function App() {
       const { data: studentCode } = await supabase
         .rpc('generate_student_code', { p_prefix: prefix });
 
-      const { data: studentData, error: studentError } = await supabase
+      const { data: insertedData, error: studentError } = await supabase
         .from('students')
         .insert({
           name: registerData.adultName,
@@ -377,10 +452,12 @@ export default function App() {
           emergency_contact: registerData.adultName,
           emergency_phone: registerData.phone,
           parent_uid: authUid,
+          family_id: familyId,
           student_code: studentCode,
           age_type: ageType,
+          category: 'adult',
         })
-        .select('name, student_code')
+        .select('id')
         .single();
 
       if (studentError) {
@@ -389,10 +466,29 @@ export default function App() {
         return;
       }
 
-      if (studentData) results.push(studentData);
+      // 重新查詢以取得 trigger 產生的 student_number
+      if (insertedData) {
+        const { data: studentWithNumber } = await supabase
+          .from('students')
+          .select('name, student_number')
+          .eq('id', insertedData.id)
+          .single();
+        console.log('學員編號:', studentWithNumber);
+        if (studentWithNumber) results.push(studentWithNumber);
+      }
     }
 
-    // 3. 顯示結果
+    // 3. 寫入 user_roles
+    await supabase.from('user_roles').insert({
+      user_id: authUid,
+      role: 'parent',
+      name: registerData.registerType === 'parent' ? registerData.parentName : registerData.adultName,
+      email: registerData.email,
+      phone: registerData.phone,
+    });
+
+    // 4. 顯示結果
+    console.log('註冊回傳的學員資料:', results);
     setRegisteredStudents(results);
     setShowRegistrationResult(true);
   };
@@ -401,6 +497,7 @@ export default function App() {
     await supabase.auth.signOut();
     setUserRole('user');
     setIsAdminLoggedIn(false);
+    setUserCategory('');
     setActiveTab('home');
   };
 
@@ -462,8 +559,11 @@ export default function App() {
               </button>
             )}
 
-            <div className={`hidden sm:block px-2 py-1 rounded text-[10px] font-bold uppercase ${userRole === 'admin' ? 'bg-red-100 text-red-600' : 'bg-blue-100 text-blue-600'}`}>
-              {userRole === 'admin' ? 'Admin' : 'Student'}
+            <div className={`hidden sm:block px-2 py-1 rounded text-[10px] font-bold uppercase ${
+              userRole === 'admin' ? 'bg-red-100 text-red-600' :
+              userCategory === 'adult' ? 'bg-green-100 text-green-600' : 'bg-blue-100 text-blue-600'
+            }`}>
+              {userRole === 'admin' ? 'Admin' : userCategory === 'adult' ? 'Adult' : 'Student'}
             </div>
 
             <span className="hidden sm:block text-sm text-neutral-600 max-w-[160px] truncate">
@@ -500,16 +600,17 @@ export default function App() {
     switch (activeTab) {
       case 'home': 
         return (
-          <CourseOverviewPage 
+          <CourseOverviewPage
             courses={courses}
-            onRegister={handleRegister} 
-            userRole={userRole} 
+            onRegister={handleRegister}
+            userRole={userRole}
+            userCategory={userCategory}
             onJoinWaitlist={(entry) => setWaitlists(prev => [...prev, { ...entry, id: Math.random().toString(36).substr(2, 9) }])}
           />
         );
-      case 'sessions': 
-        return <SessionsPage courses={courses} userRole={userRole} waitlists={waitlists} />;
-      case 'register': 
+      case 'sessions':
+        return <SessionsPage courses={courses} userRole={userRole} waitlists={waitlists} userCategory={userCategory} />;
+      case 'register':
         return (
           <RegisterPage
             courses={courses}
@@ -517,14 +618,16 @@ export default function App() {
             onComplete={handleComplete}
             onRefreshCourses={fetchCourses}
             userRole={userRole}
+            userCategory={userCategory}
           />
         );
-      default: 
+      default:
         return (
-          <CourseOverviewPage 
+          <CourseOverviewPage
             courses={courses}
-            onRegister={handleRegister} 
-            userRole={userRole} 
+            onRegister={handleRegister}
+            userRole={userRole}
+            userCategory={userCategory}
             onJoinWaitlist={(entry) => setWaitlists(prev => [...prev, { ...entry, id: Math.random().toString(36).substr(2, 9) }])}
           />
         );
@@ -685,11 +788,13 @@ export default function App() {
               {registeredStudents.map((student, index) => (
                 <div key={index} className="bg-white border-2 border-primary/20 rounded-xl p-4 flex items-center justify-between">
                   <div>
-                    <p className="font-bold text-neutral-900">{student.name}</p>
-                    <p className="text-sm text-neutral-500">學員</p>
+                    <p className="font-bold text-neutral-900 text-lg">{student.name}</p>
+                    <p className="text-sm text-neutral-500">
+                      {(student.student_code || student.student_number || '')?.startsWith('AD') ? '成人學員' : '兒童學員'}
+                    </p>
                   </div>
                   <div className="bg-primary/10 px-4 py-2 rounded-lg">
-                    <p className="font-bold text-primary text-lg">{student.student_code}</p>
+                    <p className="font-bold text-primary text-xl">{student.student_code || student.student_number || '產生中...'}</p>
                   </div>
                 </div>
               ))}

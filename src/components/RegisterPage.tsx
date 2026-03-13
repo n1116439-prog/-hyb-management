@@ -5,34 +5,21 @@ import { Course } from '../types';
 import { supabase } from '../lib/supabase';
 import { Button, FormField, Badge } from './UI';
 
-const PLANS = {
-  children: [
-    { id: 'trial', name: '試上課程', subName: '單堂課程', price: 600, originalPrice: 900, sessions: 1, desc: '此課程適用於新生試上課程' },
-    { id: '8_sessions', name: '彈性選擇方案', subName: '8堂', price: 765, originalPrice: 900, sessions: 8, desc: '適合時間不固定報名，期限12週' },
-    { id: '15_sessions', name: '穩步學習方案', subName: '15堂', price: 720, originalPrice: 900, sessions: 15, desc: '適用舊生，期限20週' },
-    { id: '12_sessions', name: '新生首選方案', subName: '12堂', price: 650, originalPrice: 900, sessions: 12, desc: '適合新生，期限16週' },
-    { id: '25_sessions', name: '高效進階方案', subName: '25堂', price: 675, originalPrice: 900, sessions: 25, desc: '適用舊生，期限32週' },
-    { id: '50_sessions', name: '完整培訓方案', subName: '50堂', price: 630, originalPrice: 900, sessions: 50, desc: '適用舊生，期限64週' },
-  ],
-  adult: [
-    { id: 'trial', name: '試上課程', subName: '單堂課程', price: 600, originalPrice: 1000, sessions: 1, desc: '此課程適用於新生試上課程' },
-    { id: '8_sessions', name: '彈性選擇方案', subName: '8堂', price: 850, originalPrice: 1000, sessions: 8, desc: '適合時間不固定報名，期限12週' },
-    { id: '15_sessions', name: '穩步學習方案', subName: '15堂', price: 800, originalPrice: 1000, sessions: 15, desc: '適用舊生，期限20週' },
-    { id: '12_sessions', name: '新生首選方案', subName: '12堂', price: 650, originalPrice: 1000, sessions: 12, desc: '適合新生，期限16週' },
-    { id: '25_sessions', name: '高效進階方案', subName: '25堂', price: 750, originalPrice: 1000, sessions: 25, desc: '適用舊生，期限32週' },
-    { id: '50_sessions', name: '完整培訓方案', subName: '50堂', price: 700, originalPrice: 1000, sessions: 50, desc: '適用舊生，期限64週' },
-  ]
-};
-
-export const RegisterPage: React.FC<{ courses: Course[]; initialCourseId?: string; onComplete: () => void; onRefreshCourses?: () => void; userRole: 'user' | 'admin' | 'student' }> = ({ courses, initialCourseId, onComplete, onRefreshCourses, userRole }) => {
+export const RegisterPage: React.FC<{ courses: Course[]; initialCourseId?: string; onComplete: () => void; onRefreshCourses?: () => void; userRole: 'user' | 'admin' | 'student'; userCategory?: 'child' | 'adult' | '' }> = ({ courses, initialCourseId, onComplete, onRefreshCourses, userRole, userCategory }) => {
   const [step, setStep] = useState(1);
   const [myStudents, setMyStudents] = useState<any[]>([]);
   const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
   const [showCheckout, setShowCheckout] = useState(false);
+  const [plans, setPlans] = useState<any[]>([]);
+
+  // 優惠碼
+  const [promoCode, setPromoCode] = useState('');
+  const [promoResult, setPromoResult] = useState<any>(null);
+  const [promoError, setPromoError] = useState('');
 
   const [formData, setFormData] = useState({
     category: initialCourseId ? (courses.find(c => c.id === initialCourseId)?.category || 'children') : 'children' as 'children' | 'adult',
-    planId: 'trial',
+    planId: '',
     type: 'trial' as 'trial' | 'official',
     location: initialCourseId ? (courses.find(c => c.id === initialCourseId)?.location || '') : '',
     courseId: initialCourseId || '',
@@ -44,6 +31,19 @@ export const RegisterPage: React.FC<{ courses: Course[]; initialCourseId?: strin
   const [agreed, setAgreed] = useState(false);
   const [calendarYear, setCalendarYear] = useState(() => new Date().getFullYear());
   const [calendarMonth, setCalendarMonth] = useState(() => new Date().getMonth());
+
+  // 從 Supabase 讀取方案
+  useEffect(() => {
+    const fetchPlans = async () => {
+      const { data } = await supabase
+        .from('course_plans')
+        .select('*')
+        .eq('is_active', true)
+        .order('sort_order')
+      if (data) setPlans(data)
+    }
+    fetchPlans()
+  }, [])
 
   // 讀取當前登入帳號底下的學員
   useEffect(() => {
@@ -131,19 +131,79 @@ export const RegisterPage: React.FC<{ courses: Course[]; initialCourseId?: strin
   };
   const handleBack = () => setStep(s => Math.max(s - 1, 1));
 
-  const selectedPlan = PLANS[autoCategory].find(p => p.id === formData.planId);
+  const selectedPlan = plans.find(p => p.id === formData.planId);
   const selectedCourse = courses.find(c => c.id === formData.courseId);
   const participantCount = selectedStudentIds.length;
 
-  const calcTotalPrice = () => {
-    if (!selectedPlan) return 0;
-    const discountPerSession = participantCount >= 3
-      ? (autoCategory === 'children' ? 20 : 30)
-      : 0;
-    return (selectedPlan.price - discountPerSession) * selectedPlan.sessions * participantCount;
-  };
+  // 費用計算（含優惠碼）
+  let totalPrice = selectedPlan ? selectedPlan.price_per_session * selectedPlan.sessions * participantCount : 0;
+  let discountAmount = 0;
+  let bonusSessions = 0;
 
-  const totalPrice = calcTotalPrice();
+  if (promoResult) {
+    if (promoResult.type === 'percentage') {
+      discountAmount = Math.round(totalPrice * promoResult.value / 100);
+    } else if (promoResult.type === 'fixed') {
+      discountAmount = promoResult.value;
+    } else if (promoResult.type === 'free_sessions') {
+      bonusSessions = promoResult.value;
+    }
+  }
+
+  const finalPrice = Math.max(0, totalPrice - discountAmount);
+
+  // 驗證優惠碼
+  const validatePromoCode = async () => {
+    if (!promoCode.trim()) return
+    setPromoError('')
+    setPromoResult(null)
+
+    const { data: promo } = await supabase
+      .from('promo_codes')
+      .select('*')
+      .eq('code', promoCode.trim().toUpperCase())
+      .eq('is_active', true)
+      .single()
+
+    if (!promo) {
+      setPromoError('無效的優惠碼')
+      return
+    }
+
+    // 檢查日期
+    const today = new Date().toISOString().split('T')[0]
+    if (promo.start_date && today < promo.start_date) {
+      setPromoError('此優惠碼尚未開始')
+      return
+    }
+    if (promo.end_date && today > promo.end_date) {
+      setPromoError('此優惠碼已過期')
+      return
+    }
+
+    // 檢查使用次數
+    if (promo.max_uses && promo.current_uses >= promo.max_uses) {
+      setPromoError('此優惠碼已達使用上限')
+      return
+    }
+
+    // 檢查指定學員
+    if (promo.target_type === 'specific_students' && promo.target_student_ids?.length > 0) {
+      const hasMatch = selectedStudentIds.some(id => promo.target_student_ids.includes(id))
+      if (!hasMatch) {
+        setPromoError('此優惠碼不適用於所選學員')
+        return
+      }
+    }
+
+    // 檢查最低堂數
+    if (promo.min_sessions && selectedPlan && selectedPlan.sessions < promo.min_sessions) {
+      setPromoError(`此優惠碼需購買 ${promo.min_sessions} 堂以上`)
+      return
+    }
+
+    setPromoResult(promo)
+  }
 
   const handleSubmit = async () => {
     try {
@@ -165,22 +225,21 @@ export const RegisterPage: React.FC<{ courses: Course[]; initialCourseId?: strin
         }
       }
 
-      // 為每位學員寫入堂數
-      const PLAN_CONFIG: Record<string, { sessions: number, weeks: number, maxLeave: number }> = {
-        'trial': { sessions: 1, weeks: 1, maxLeave: 0 },
-        '8_sessions': { sessions: 8, weeks: 12, maxLeave: 4 },
-        '12_sessions': { sessions: 12, weeks: 16, maxLeave: 4 },
-        '15_sessions': { sessions: 15, weeks: 20, maxLeave: 5 },
-        '25_sessions': { sessions: 25, weeks: 32, maxLeave: 7 },
-        '50_sessions': { sessions: 50, weeks: 64, maxLeave: 14 },
-      };
+      // 為每位學員寫入堂數（使用 course_plans 資料）
+      console.log('開始寫入 credits')
+      console.log('selectedPlan:', selectedPlan)
+      console.log('formData.planId:', formData.planId)
+      console.log('plans:', plans)
 
-      const planKey = formData.planId || 'trial';
-      const planConfig = PLAN_CONFIG[planKey] || PLAN_CONFIG['trial'];
+      const planToUse = selectedPlan || plans.find(p => p.id === formData.planId) || { sessions: 1, weeks_limit: 4, max_leave: 0, price_per_session: 600 };
+      console.log('planToUse:', planToUse)
+
       const expiryDate = new Date();
-      expiryDate.setDate(expiryDate.getDate() + planConfig.weeks * 7);
+      expiryDate.setDate(expiryDate.getDate() + (planToUse.weeks_limit || 12) * 7);
 
       for (const studentId of selectedStudentIds) {
+        console.log('寫入 credits for student:', studentId)
+
         const { data: existingCredit } = await supabase
           .from('credits')
           .select('id, total_credits, remaining_credits, leave_count')
@@ -188,40 +247,59 @@ export const RegisterPage: React.FC<{ courses: Course[]; initialCourseId?: strin
           .eq('course_id', formData.courseId)
           .single();
 
+        const creditSessions = (planToUse.sessions || 1) + bonusSessions;
+
         if (existingCredit) {
           // 續購：累加堂數，延長期限
-          await supabase.from('credits').update({
-            total_credits: existingCredit.total_credits + planConfig.sessions,
-            remaining_credits: (existingCredit.remaining_credits || 0) + planConfig.sessions,
+          const { error: updateError } = await supabase.from('credits').update({
+            total_credits: existingCredit.total_credits + creditSessions,
+            remaining_credits: (existingCredit.remaining_credits || 0) + creditSessions,
             expiry_date: expiryDate.toISOString().split('T')[0],
-            plan_weeks: planConfig.weeks,
-            max_leave: planConfig.maxLeave,
+            plan_weeks: planToUse.weeks_limit || 12,
+            max_leave: planToUse.max_leave || 0,
             status: 'active',
           }).eq('id', existingCredit.id);
+          console.log('更新 credits 結果:', updateError)
         } else {
           // 新增
-          await supabase.from('credits').insert({
+          const { error: insertError } = await supabase.from('credits').insert({
             student_id: studentId,
             course_id: formData.courseId,
-            total_credits: planConfig.sessions,
+            total_credits: creditSessions,
             used_credits: 0,
-            remaining_credits: planConfig.sessions,
+            remaining_credits: creditSessions,
             leave_count: 0,
-            max_leave: planConfig.maxLeave,
-            plan_weeks: planConfig.weeks,
+            max_leave: planToUse.max_leave || 0,
+            plan_weeks: planToUse.weeks_limit || 12,
             expiry_date: expiryDate.toISOString().split('T')[0],
             status: 'active',
           });
+          console.log('新增 credits 結果:', insertError)
         }
       }
 
       // 寫入付款紀錄
       await supabase.from('payments').insert({
         student_id: selectedStudentIds[0],
-        amount: totalPrice,
+        amount: finalPrice,
         payment_method: '匯款',
         description: `${selectedStudentIds.length}位學員 - ${selectedPlan?.name || ''}`,
       });
+
+      // 優惠碼使用紀錄
+      if (promoResult) {
+        await supabase.from('promo_codes').update({
+          current_uses: promoResult.current_uses + 1
+        }).eq('id', promoResult.id)
+
+        await supabase.from('promo_code_usage').insert({
+          promo_code_id: promoResult.id,
+          student_id: selectedStudentIds[0],
+          discount_amount: discountAmount,
+          original_amount: totalPrice,
+          final_amount: finalPrice,
+        })
+      }
 
       // 重新讀取課程資料（更新名額顯示）
       onRefreshCourses?.();
@@ -276,7 +354,7 @@ export const RegisterPage: React.FC<{ courses: Course[]; initialCourseId?: strin
             <div className="h-px bg-neutral-100" />
             <div className="flex justify-between items-center">
               <span className="text-neutral-500">應付金額</span>
-              <span className="text-xl font-black text-primary">NT$ {totalPrice.toLocaleString()}</span>
+              <span className="text-xl font-black text-primary">NT$ {finalPrice.toLocaleString()}</span>
             </div>
           </div>
         </div>
@@ -437,13 +515,13 @@ export const RegisterPage: React.FC<{ courses: Course[]; initialCourseId?: strin
 
               <FormField label="選擇報名方案">
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {PLANS[autoCategory].map(plan => (
+                  {plans.map(plan => (
                     <button
                       key={plan.id}
                       onClick={() => setFormData({
                         ...formData,
                         planId: plan.id,
-                        type: plan.id === 'trial' ? 'trial' : 'official'
+                        type: plan.is_trial ? 'trial' : 'official'
                       })}
                       className={`relative p-4 rounded-xl border-2 text-left transition-all flex flex-col gap-2 ${
                         formData.planId === plan.id
@@ -453,20 +531,20 @@ export const RegisterPage: React.FC<{ courses: Course[]; initialCourseId?: strin
                     >
                       <div className="space-y-0.5">
                         <p className={`text-[10px] font-bold ${formData.planId === plan.id ? 'text-primary' : 'text-neutral-500'}`}>
-                          {plan.name}
+                          {plan.is_trial ? '試上課程' : plan.name}
                         </p>
-                        <h4 className="text-lg font-bold text-neutral-900">{plan.subName}</h4>
+                        <h4 className="text-lg font-bold text-neutral-900">{plan.sessions}堂</h4>
                       </div>
 
                       <div className="mt-auto pt-2">
                         <div className="flex items-baseline gap-1">
-                          {plan.id !== 'trial' && (
-                            <span className="text-xs text-neutral-400 line-through">原價{plan.originalPrice}</span>
+                          {plan.original_price && (
+                            <span className="text-xs text-neutral-400 line-through">原價{plan.original_price}</span>
                           )}
-                          <span className="text-xl font-black text-accent">{plan.price}</span>
+                          <span className="text-xl font-black text-accent">{plan.price_per_session}</span>
                           <span className="text-[10px] text-accent font-bold">/堂</span>
                         </div>
-                        <p className="text-[10px] text-neutral-500 mt-1 leading-tight">{plan.desc}</p>
+                        <p className="text-[10px] text-neutral-500 mt-1 leading-tight">{plan.description}</p>
                       </div>
 
                       {formData.planId === plan.id && (
@@ -477,55 +555,58 @@ export const RegisterPage: React.FC<{ courses: Course[]; initialCourseId?: strin
                     </button>
                   ))}
                 </div>
-                <p className="text-[10px] text-neutral-400 mt-3 text-center">
-                  * 3 位以上團報優惠每人每堂課程可折抵 {autoCategory === 'children' ? '20' : '30'} / 堂
-                </p>
               </FormField>
 
               <div className={`space-y-3 ${errors.has('courseId') ? 'ring-2 ring-danger/20 bg-danger/5 rounded-xl p-1' : ''}`}>
                 <p className="font-bold text-sm text-neutral-700">選擇班級</p>
-                {courses.filter(c => {
-                  if (isMixed) return true
-                  if (autoCategory === 'adult') return c.category === 'adult'
-                  return c.category === 'children'
-                }).map(course => {
-                  const isFull = course.currentEnrollment >= course.maxEnrollment;
-                  return (
-                    <div
-                      key={course.id}
-                      onClick={() => {
-                        if (isFull) return;
-                        setFormData({ ...formData, courseId: course.id, location: course.location });
-                        if (errors.has('courseId')) {
-                          const next = new Set(errors);
-                          next.delete('courseId');
-                          setErrors(next);
-                        }
-                      }}
-                      className={`p-4 rounded-xl border-2 cursor-pointer transition-all ${
-                        formData.courseId === course.id
-                          ? 'border-primary bg-primary/5'
-                          : isFull
-                            ? 'border-neutral-50 bg-neutral-50 opacity-60 grayscale cursor-not-allowed'
-                            : 'border-neutral-200 hover:border-neutral-300'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <p className="font-bold text-neutral-900">{course.name}</p>
-                        {isFull && <Badge variant="neutral">已額滿</Badge>}
-                      </div>
-                      <p className="text-sm text-neutral-500">
-                        {course.location} · {course.schedule} {course.time}{course.coaches?.length > 0 ? ` · ${course.coaches.join('、')}` : ''}
-                      </p>
-                      <p className="text-sm text-primary font-medium mt-1">
-                        {course.currentEnrollment}/{course.maxEnrollment} 人
-                      </p>
-                    </div>
+                {(() => {
+                  const filteredCourses = courses.filter(c => {
+                    if (isMixed) return true
+                    if (autoCategory === 'adult') return c.category === 'adult'
+                    return c.category === 'children'
+                  });
+                  // 如果篩選後無課程，顯示全部課程
+                  const displayCourses = filteredCourses.length > 0 ? filteredCourses : courses;
+                  return displayCourses.length === 0 ? (
+                    <p className="text-center text-neutral-500 py-4">目前沒有可報名的課程</p>
+                  ) : (
+                    displayCourses.map(course => {
+                      const isFull = course.currentEnrollment >= course.maxEnrollment;
+                      return (
+                        <div
+                          key={course.id}
+                          onClick={() => {
+                            if (isFull) return;
+                            setFormData({ ...formData, courseId: course.id, location: course.location });
+                            if (errors.has('courseId')) {
+                              const next = new Set(errors);
+                              next.delete('courseId');
+                              setErrors(next);
+                            }
+                          }}
+                          className={`p-4 rounded-xl border-2 cursor-pointer transition-all ${
+                            formData.courseId === course.id
+                              ? 'border-primary bg-primary/5'
+                              : isFull
+                                ? 'border-neutral-50 bg-neutral-50 opacity-60 grayscale cursor-not-allowed'
+                                : 'border-neutral-200 hover:border-neutral-300'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <p className="font-bold text-neutral-900">{course.name}</p>
+                            {isFull && <Badge variant="neutral">已額滿</Badge>}
+                          </div>
+                          <p className="text-sm text-neutral-500">
+                            {course.location} · {course.schedule} {course.time}{course.coaches?.length > 0 ? ` · ${course.coaches.join('、')}` : ''}
+                          </p>
+                          <p className="text-sm text-primary font-medium mt-1">
+                            {course.currentEnrollment}/{course.maxEnrollment} 人
+                          </p>
+                        </div>
+                      );
+                    })
                   );
-                })}
-                {courses.filter(c => isMixed ? true : c.category === autoCategory).length === 0 && (
-                  <p className="text-center text-neutral-500 py-4">目前沒有可報名的課程</p>
-                )}
+                })()}
               </div>
 
               {formData.type === 'trial' && (
@@ -706,7 +787,7 @@ export const RegisterPage: React.FC<{ courses: Course[]; initialCourseId?: strin
                     </div>
                     <div className="space-y-1 flex-1">
                       <p className="text-xs text-neutral-600">方案</p>
-                      <p className="font-medium">{selectedPlan?.name} ({selectedPlan?.subName})</p>
+                      <p className="font-medium">{selectedPlan?.name} ({selectedPlan?.sessions}堂)</p>
                     </div>
                   </div>
                   {formData.type === 'trial' && (
@@ -720,42 +801,71 @@ export const RegisterPage: React.FC<{ courses: Course[]; initialCourseId?: strin
 
               <div className="h-px bg-neutral-100" />
 
+              {/* 優惠碼 */}
+              <div className="space-y-2">
+                <p className="font-medium text-sm">優惠碼</p>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    placeholder="輸入優惠碼"
+                    value={promoCode}
+                    onChange={e => setPromoCode(e.target.value.toUpperCase())}
+                    className="flex-1 px-4 py-2 border rounded-xl"
+                  />
+                  <button
+                    onClick={validatePromoCode}
+                    className="px-4 py-2 bg-primary text-white rounded-xl text-sm font-medium"
+                  >
+                    套用
+                  </button>
+                </div>
+                {promoError && <p className="text-sm text-red-500">{promoError}</p>}
+                {promoResult && (
+                  <div className="bg-green-50 border border-green-200 rounded-xl p-3">
+                    <p className="text-green-700 font-medium text-sm">✓ {promoResult.name}</p>
+                    <p className="text-green-600 text-xs">
+                      {promoResult.type === 'percentage' && `打 ${100 - promoResult.value} 折`}
+                      {promoResult.type === 'fixed' && `折扣 NT$ ${promoResult.value}`}
+                      {promoResult.type === 'free_sessions' && `贈送 ${promoResult.value} 堂`}
+                    </p>
+                  </div>
+                )}
+              </div>
+
               {/* 費用 */}
               <div className="space-y-4">
                 <div className="flex items-center gap-2 text-sm font-bold text-neutral-900">
                   <DollarSign size={18} className="text-primary" />
                   費用預估
                 </div>
-                {selectedPlan && (() => {
-                  const discountPerSession = participantCount >= 3
-                    ? (autoCategory === 'children' ? 20 : 30)
-                    : 0;
-                  const originalTotal = selectedPlan.price * selectedPlan.sessions * participantCount;
-                  const totalDiscount = discountPerSession * selectedPlan.sessions * participantCount;
-
-                  return (
-                    <div className="bg-neutral-50 rounded-xl p-4 space-y-3">
-                      <div className="flex justify-between text-sm">
-                        <span className="text-neutral-600">方案原價 ({selectedPlan.subName} × {participantCount}人)</span>
-                        <span className="font-medium">NT$ {originalTotal.toLocaleString()}</span>
+                {selectedPlan && (
+                  <div className="bg-neutral-50 rounded-xl p-4 space-y-3">
+                    <div className="flex justify-between text-sm">
+                      <span className="text-neutral-600">原價 ({selectedPlan.sessions}堂 × {participantCount}人)</span>
+                      <span className="font-medium">NT$ {totalPrice.toLocaleString()}</span>
+                    </div>
+                    {discountAmount > 0 && (
+                      <div className="flex justify-between text-sm text-danger">
+                        <span>折扣</span>
+                        <span className="font-medium">- NT$ {discountAmount.toLocaleString()}</span>
                       </div>
-                      {totalDiscount > 0 && (
-                        <div className="flex justify-between text-sm text-danger">
-                          <span className="flex items-center gap-1">團報優惠 (每人每堂 -{discountPerSession})</span>
-                          <span className="font-medium">- NT$ {totalDiscount.toLocaleString()}</span>
-                        </div>
-                      )}
-                      <div className="h-px bg-neutral-200" />
-                      <div className="flex justify-between items-center">
-                        <span className="text-sm font-bold text-neutral-900">預計總費用</span>
-                        <div className="text-right">
-                          <span className="text-2xl font-black text-primary">NT$ {totalPrice.toLocaleString()}</span>
-                          <p className="text-[10px] text-neutral-500">共 {selectedPlan.sessions * participantCount} 堂課</p>
-                        </div>
+                    )}
+                    {bonusSessions > 0 && (
+                      <div className="flex justify-between text-sm text-green-600">
+                        <span>贈送堂數</span>
+                        <span className="font-medium">+ {bonusSessions} 堂</span>
+                      </div>
+                    )}
+                    <div className="h-px bg-neutral-200" />
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm font-bold text-neutral-900">預計總費用</span>
+                      <div className="text-right">
+                        <span className="text-2xl font-black text-primary">NT$ {finalPrice.toLocaleString()}</span>
+                        <p className="text-[10px] text-neutral-500">共 {(selectedPlan.sessions + bonusSessions) * participantCount} 堂課</p>
                       </div>
                     </div>
-                  );
-                })()}
+                  </div>
+                )}
               </div>
             </div>
 

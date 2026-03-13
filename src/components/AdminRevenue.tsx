@@ -14,6 +14,20 @@ export const AdminRevenue: React.FC = () => {
         .select('amount, payment_date')
         .order('payment_date')
 
+      // 讀取支出資料
+      const { data: expensesData } = await supabase
+        .from('expenses')
+        .select('amount, expense_date, category')
+        .order('expense_date')
+
+      // 按月分組支出
+      const expenseGrouped: Record<string, number> = {}
+      expensesData?.forEach(e => {
+        const date = new Date(e.expense_date)
+        const monthKey = `${date.getMonth() + 1}月`
+        expenseGrouped[monthKey] = (expenseGrouped[monthKey] || 0) + (e.amount || 0)
+      })
+
       if (payments && payments.length > 0) {
         const grouped: Record<string, number> = {}
         payments.forEach(p => {
@@ -24,7 +38,14 @@ export const AdminRevenue: React.FC = () => {
         setRevenueData(Object.entries(grouped).map(([month, revenue]) => ({
           month,
           revenue,
-          expenses: 0,
+          expenses: expenseGrouped[month] || 0,
+        })))
+      } else if (expensesData && expensesData.length > 0) {
+        // 如果 payments 沒資料，至少顯示 expenses
+        setRevenueData(Object.entries(expenseGrouped).map(([month, expenses]) => ({
+          month,
+          revenue: 0,
+          expenses,
         })))
       }
     }
@@ -88,7 +109,7 @@ export const AdminRevenue: React.FC = () => {
               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E5E5" />
               <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fill: '#A3A3A3', fontSize: 12 }} dy={10} />
               <YAxis axisLine={false} tickLine={false} tick={{ fill: '#A3A3A3', fontSize: 12 }} dx={-10} tickFormatter={(value) => `$${value / 1000}k`} />
-              <Tooltip 
+              <Tooltip
                 cursor={{ fill: '#F5F5F5' }}
                 contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1)' }}
               />

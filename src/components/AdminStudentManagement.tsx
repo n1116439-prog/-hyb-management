@@ -40,6 +40,7 @@ export const AdminStudentManagement: React.FC<{
       .select('*')
       .order('created_at', { ascending: false })
 
+    console.log('學員原始資料:', studentsData)
     if (!studentsData) { setLoading(false); return }
 
     const { data: enrollmentsData } = await supabase
@@ -74,8 +75,8 @@ export const AdminStudentManagement: React.FC<{
         emergencyPhone: s.emergency_phone || '',
         notes: s.notes || '',
         parentUid: s.parent_uid || '',
-        studentNumber: s.student_number || '',
-        studentCode: s.student_code || '',
+        studentNumber: s.student_number || s.student_code || '',
+        studentCode: s.student_code || s.student_number || '',
         createdAt: s.created_at || '',
         // 報名班級
         courses: studentEnrollments.map((e: any) => (e.courses as any)?.name || '').filter(Boolean),
@@ -132,7 +133,8 @@ export const AdminStudentManagement: React.FC<{
     const matchSearch = s.studentName.toLowerCase().includes(q) ||
                         (s.coursesDisplay || '').toLowerCase().includes(q) ||
                         (s.phone || '').toLowerCase().includes(q) ||
-                        (s.studentCode || '').toLowerCase().includes(q);
+                        (s.studentCode || '').toLowerCase().includes(q) ||
+                        (s.studentNumber || '').toLowerCase().includes(q);
     const matchStatus = filterStatus === 'all' ||
       (filterStatus === 'paid' && s.paymentStatus === '已繳費') ||
       (filterStatus === 'unpaid' && s.paymentStatus === '尚未繳費');
@@ -280,11 +282,11 @@ export const AdminStudentManagement: React.FC<{
               <tr key={student.id} className="hover:bg-neutral-50/50 transition-colors group">
                 <td className="px-8 py-6">
                   <span className={`text-sm font-bold ${
-                    student.studentCode?.startsWith('ST')
+                    (student.studentCode || student.studentNumber)?.startsWith('ST')
                       ? 'text-blue-600'
                       : 'text-green-600'
                   }`}>
-                    {student.studentCode || '未編號'}
+                    {student.studentCode || student.studentNumber || '未編號'}
                   </span>
                 </td>
                 <td className="px-8 py-6">

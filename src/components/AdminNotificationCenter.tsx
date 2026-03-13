@@ -1,15 +1,16 @@
-import React, { useState, useMemo } from 'react';
-import { 
-  Bell, 
-  Search, 
-  Filter, 
-  Check, 
-  Calendar, 
-  Clock, 
-  AlertCircle, 
-  MessageSquare, 
-  CreditCard, 
-  UserPlus, 
+import React, { useState, useEffect, useMemo } from 'react';
+import {
+
+  Bell,
+  Search,
+  Filter,
+  Check,
+  Calendar,
+  Clock,
+  AlertCircle,
+  MessageSquare,
+  CreditCard,
+  UserPlus,
   Settings,
   X,
   CheckCheck,
@@ -17,57 +18,160 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Button, Input, Select, Badge, FormField } from './UI';
-import { NOTIFICATIONS, NOTIFICATION_SETTINGS } from '../constants';
-import { Notification, NotificationSettings } from '../types';
+import { supabase } from '../lib/supabase';
 
-const NOTIFICATION_TYPE_CONFIG = {
-  contract_expiry: { label: '合約到期提醒', icon: Calendar, color: '#E53E3E', bg: '#FEF2F2', defaultPriority: 'high' as const },
-  credits_low: { label: '堂數不足提醒', icon: MessageSquare, color: '#D97706', bg: '#FFFBEB', defaultPriority: 'medium' as const },
-  unpaid: { label: '未繳費提醒', icon: CreditCard, color: '#DC2626', bg: '#FEF2F2', defaultPriority: 'medium' as const },
-  waitlist: { label: '候補上線通知', icon: UserPlus, color: '#2563EB', bg: '#EFF6FF', defaultPriority: 'high' as const },
-  new_enrollment: { label: '新報名通知', icon: Bell, color: '#059669', bg: '#ECFDF5', defaultPriority: 'low' as const },
-  schedule_change: { label: '課程異動通知', icon: AlertCircle, color: '#7C3AED', bg: '#F5F3FF', defaultPriority: 'high' as const },
+const NOTIFICATION_TYPE_CONFIG: Record<string, { label: string; icon: any; color: string; bg: string; defaultPriority: 'high' | 'medium' | 'low' }> = {
+  contract_expiry: { label: '合約到期提醒', icon: Calendar, color: '#E53E3E', bg: '#FEF2F2', defaultPriority: 'high' },
+  credits_low: { label: '堂數不足提醒', icon: MessageSquare, color: '#D97706', bg: '#FFFBEB', defaultPriority: 'medium' },
+  credits_expired: { label: '堂數已過期', icon: Clock, color: '#DC2626', bg: '#FEF2F2', defaultPriority: 'high' },
+  unpaid: { label: '未繳費提醒', icon: CreditCard, color: '#DC2626', bg: '#FEF2F2', defaultPriority: 'medium' },
+  waitlist: { label: '候補上線通知', icon: UserPlus, color: '#2563EB', bg: '#EFF6FF', defaultPriority: 'high' },
+  new_enrollment: { label: '新報名通知', icon: Bell, color: '#059669', bg: '#ECFDF5', defaultPriority: 'low' },
+  schedule_change: { label: '課程異動通知', icon: AlertCircle, color: '#7C3AED', bg: '#F5F3FF', defaultPriority: 'high' },
 };
 
-const PRIORITY_CONFIG = {
+const PRIORITY_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
   high: { label: '高優先級', color: '#DC2626', bg: '#FEF2F2' },
   medium: { label: '中優先級', color: '#D97706', bg: '#FFFBEB' },
   low: { label: '低優先級', color: '#059669', bg: '#ECFDF5' },
 };
 
 export const AdminNotificationCenter: React.FC = () => {
-  const [notifications, setNotifications] = useState<Notification[]>(NOTIFICATIONS);
-  const [settings, setSettings] = useState<NotificationSettings>(NOTIFICATION_SETTINGS);
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [notifSettings, setNotifSettings] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState('all');
   const [filterReadStatus, setFilterReadStatus] = useState<'all' | 'unread' | 'read'>('all');
 
+  // 動態產生通知（根據資料庫狀態）
+  const generateDynamicNotifications = async () => {
+    const newNotifs: any[] = []
+
+    // 檢查堂數不足的學員
+    const { data: lowCredits } = await supabase
+      .from('credits')
+      .select('*, students(name, student_number)')
+      .lte('remaining_credits', 4)
+      .eq('status', 'active')
+
+    lowCredits?.forEach(c => {
+      newNotifs.push({
+        type: 'credits_low',
+        title: '堂數不足提醒',
+        message: `學員「${c.students?.name}」(${c.students?.student_number}) 剩餘堂數僅剩 ${c.remaining_credits} 堂`,
+        priority: c.remaining_credits <= 2 ? 'high' : 'medium',
+      })
+    })
+
+    // 檢查堂數過期
+    const { data: expiredCredits } = await supabase
+      .from('credits')
+      .select('*, students(name, student_number)')
+      .lt('expiry_date', new Date().toISOString().split('T')[0])
+      .eq('status', 'active')
+
+    expiredCredits?.forEach(c => {
+      newNotifs.push({
+        type: 'credits_expired',
+        title: '堂數已過期',
+        message: `學員「${c.students?.name}」(${c.students?.student_number}) 的堂數已於 ${c.expiry_date} 過期`,
+        priority: 'high',
+      })
+      // 更新 status
+      supabase.from('credits').update({ status: 'expired' }).eq('id', c.id)
+    })
+
+    // 檢查合約到期
+    const thirtyDaysLater = new Date()
+    thirtyDaysLater.setDate(thirtyDaysLater.getDate() + 30)
+    const { data: expiringContracts } = await supabase
+      .from('venue_contracts')
+      .select('*, venues(name)')
+      .lte('end_date', thirtyDaysLater.toISOString().split('T')[0])
+      .gte('end_date', new Date().toISOString().split('T')[0])
+
+    expiringContracts?.forEach(c => {
+      newNotifs.push({
+        type: 'contract_expiry',
+        title: '合約到期提醒',
+        message: `${c.venues?.name} 場館合約將於 ${c.end_date} 到期`,
+        priority: 'high',
+      })
+    })
+
+    // 寫入通知
+    if (newNotifs.length > 0) {
+      await supabase.from('notifications').insert(newNotifs)
+    }
+  }
+
+  const fetchNotifications = async () => {
+    setLoading(true)
+
+    // 讀取通知
+    const { data: notifs } = await supabase
+      .from('notifications')
+      .select('*')
+      .order('created_at', { ascending: false })
+
+    // 如果資料庫沒有通知，自動產生動態通知
+    if (!notifs || notifs.length === 0) {
+      await generateDynamicNotifications()
+      const { data: newNotifs } = await supabase
+        .from('notifications')
+        .select('*')
+        .order('created_at', { ascending: false })
+      if (newNotifs) setNotifications(newNotifs)
+    } else {
+      setNotifications(notifs)
+    }
+
+    // 讀取通知設定
+    const { data: settings } = await supabase
+      .from('notification_settings')
+      .select('*')
+    if (settings) setNotifSettings(settings)
+
+    setLoading(false)
+  }
+
+  useEffect(() => {
+    fetchNotifications()
+  }, [])
+
   const filteredNotifications = useMemo(() => {
     return notifications
       .filter(n => {
-        const matchesSearch = n.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                            n.message.toLowerCase().includes(searchQuery.toLowerCase());
+        const matchesSearch = n.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                            n.message?.toLowerCase().includes(searchQuery.toLowerCase());
         const matchesType = filterType === 'all' || n.type === filterType;
-        const matchesRead = filterReadStatus === 'all' || 
+        const matchesRead = filterReadStatus === 'all' ||
                            (filterReadStatus === 'unread' ? !n.read : n.read);
         return matchesSearch && matchesType && matchesRead;
       })
-      .sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
+      .sort((a: any, b: any) => new Date(b.created_at || b.time || 0).getTime() - new Date(a.created_at || a.time || 0).getTime());
   }, [notifications, searchQuery, filterType, filterReadStatus]);
 
   const unreadCount = notifications.filter(n => !n.read).length;
 
-  const handleMarkAsRead = (id: number) => {
+  const handleMarkAsRead = async (id: string) => {
+    await supabase.from('notifications').update({ read: true }).eq('id', id)
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
   };
 
-  const handleMarkAllAsRead = () => {
+  const handleMarkAllAsRead = async () => {
+    const unreadIds = notifications.filter(n => !n.read).map(n => n.id);
+    if (unreadIds.length > 0) {
+      await supabase.from('notifications').update({ read: true }).in('id', unreadIds);
+    }
     setNotifications(prev => prev.map(n => ({ ...n, read: true })));
   };
 
-  const handleAction = (id: number) => {
-    setNotifications(prev => prev.map(n => n.id === id ? { ...n, actionDone: true, read: true } : n));
+  const handleAction = async (id: string) => {
+    await supabase.from('notifications').update({ action_done: true, read: true }).eq('id', id);
+    setNotifications(prev => prev.map(n => n.id === id ? { ...n, action_done: true, read: true } : n));
     alert('操作已執行');
   };
 
@@ -78,6 +182,12 @@ export const AdminNotificationCenter: React.FC = () => {
       return 'all';
     });
   };
+
+  // Build settings map from notifSettings array
+  const settingsMap: Record<string, any> = {};
+  notifSettings.forEach(s => {
+    settingsMap[s.type] = s;
+  });
 
   return (
     <div className="max-w-[900px] mx-auto space-y-6 pb-12">
@@ -103,8 +213,8 @@ export const AdminNotificationCenter: React.FC = () => {
       </div>
 
       {/* Settings Button */}
-      <Button 
-        variant="outline" 
+      <Button
+        variant="outline"
         className="w-full h-14 bg-white border-neutral-200 text-neutral-600 rounded-2xl flex items-center justify-center gap-2 hover:bg-neutral-50"
         onClick={() => setShowSettings(true)}
       >
@@ -116,15 +226,15 @@ export const AdminNotificationCenter: React.FC = () => {
       <div className="flex gap-3">
         <div className="relative flex-1">
           <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400" size={20} />
-          <Input 
-            placeholder="搜尋通知內容..." 
+          <Input
+            placeholder="搜尋通知內容..."
             className="pl-12 h-14 bg-white border-neutral-100 shadow-sm rounded-2xl"
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
           />
         </div>
         <div className="relative group">
-          <Select 
+          <Select
             className="h-14 bg-white border-neutral-100 shadow-sm rounded-2xl px-6 min-w-[160px] appearance-none"
             value={filterType}
             onChange={e => setFilterType(e.target.value)}
@@ -136,8 +246,8 @@ export const AdminNotificationCenter: React.FC = () => {
           </Select>
           <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-neutral-400 pointer-events-none" size={18} />
         </div>
-        <Button 
-          variant={filterReadStatus !== 'all' ? 'primary' : 'ghost'} 
+        <Button
+          variant={filterReadStatus !== 'all' ? 'primary' : 'ghost'}
           className={`h-14 w-14 rounded-2xl p-0 border border-neutral-100 shadow-sm ${filterReadStatus === 'all' ? 'bg-white' : ''}`}
           onClick={toggleReadFilter}
           title={`目前篩選：${filterReadStatus === 'all' ? '全部' : filterReadStatus === 'unread' ? '未讀' : '已讀'}`}
@@ -159,7 +269,7 @@ export const AdminNotificationCenter: React.FC = () => {
           )}
         </div>
         {unreadCount > 0 && (
-          <button 
+          <button
             onClick={handleMarkAllAsRead}
             className="flex items-center gap-1.5 text-sm font-bold text-primary hover:opacity-80 transition-opacity"
           >
@@ -171,12 +281,16 @@ export const AdminNotificationCenter: React.FC = () => {
 
       {/* Notification List */}
       <div className="bg-white rounded-[32px] shadow-sm border border-neutral-100 overflow-hidden">
-        {filteredNotifications.length > 0 ? (
+        {loading ? (
+          <div className="flex flex-col items-center justify-center py-20 text-center">
+            <p className="text-neutral-500 text-sm">載入中...</p>
+          </div>
+        ) : filteredNotifications.length > 0 ? (
           <div className="divide-y divide-neutral-50">
             {filteredNotifications.map((n) => (
-              <NotificationCard 
-                key={n.id} 
-                notification={n} 
+              <NotificationCard
+                key={n.id}
+                notification={n}
                 onMarkAsRead={() => handleMarkAsRead(n.id)}
                 onAction={() => handleAction(n.id)}
               />
@@ -199,14 +313,14 @@ export const AdminNotificationCenter: React.FC = () => {
       <AnimatePresence>
         {showSettings && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <motion.div 
+            <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setShowSettings(false)}
               className="absolute inset-0 bg-neutral-900/60 backdrop-blur-sm"
             />
-            <motion.div 
+            <motion.div
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
@@ -217,7 +331,7 @@ export const AdminNotificationCenter: React.FC = () => {
                   <h2 className="text-2xl font-bold text-neutral-900">通知設定</h2>
                   <p className="text-sm text-neutral-500 mt-1">設定各類通知的開關與觸發條件</p>
                 </div>
-                <button 
+                <button
                   onClick={() => setShowSettings(false)}
                   className="w-10 h-10 rounded-full hover:bg-neutral-100 flex items-center justify-center text-neutral-400"
                 >
@@ -227,12 +341,12 @@ export const AdminNotificationCenter: React.FC = () => {
 
               <div className="p-8 space-y-6 overflow-y-auto max-h-[60vh]">
                 {Object.entries(NOTIFICATION_TYPE_CONFIG).map(([key, config]) => {
-                  const setting = settings[key];
+                  const setting = settingsMap[key] || { enabled: true };
                   return (
                     <div key={key} className="space-y-4">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-4">
-                          <div 
+                          <div
                             className="w-10 h-10 rounded-xl flex items-center justify-center"
                             style={{ backgroundColor: config.bg }}
                           >
@@ -243,11 +357,14 @@ export const AdminNotificationCenter: React.FC = () => {
                             <p className="text-xs text-neutral-400">預設優先級：{PRIORITY_CONFIG[config.defaultPriority].label}</p>
                           </div>
                         </div>
-                        <button 
-                          onClick={() => setSettings(prev => ({
-                            ...prev,
-                            [key]: { ...prev[key], enabled: !prev[key].enabled }
-                          }))}
+                        <button
+                          onClick={() => {
+                            // Toggle in local state
+                            const updated = notifSettings.map(s =>
+                              s.type === key ? { ...s, enabled: !s.enabled } : s
+                            );
+                            setNotifSettings(updated);
+                          }}
                           className={`w-12 h-6 rounded-full transition-colors relative ${setting.enabled ? 'bg-primary' : 'bg-neutral-200'}`}
                         >
                           <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${setting.enabled ? 'left-7' : 'left-1'}`} />
@@ -255,7 +372,7 @@ export const AdminNotificationCenter: React.FC = () => {
                       </div>
 
                       {setting.enabled && (key === 'contract_expiry' || key === 'credits_low' || key === 'unpaid') && (
-                        <motion.div 
+                        <motion.div
                           initial={{ height: 0, opacity: 0 }}
                           animate={{ height: 'auto', opacity: 1 }}
                           className="pl-14"
@@ -264,14 +381,16 @@ export const AdminNotificationCenter: React.FC = () => {
                             {key === 'contract_expiry' && (
                               <>
                                 <span>合約到期前</span>
-                                <Input 
-                                  type="number" 
-                                  className="w-20 h-9 text-center" 
-                                  value={setting.daysBefore}
-                                  onChange={e => setSettings(prev => ({
-                                    ...prev,
-                                    [key]: { ...prev[key], daysBefore: parseInt(e.target.value) }
-                                  }))}
+                                <Input
+                                  type="number"
+                                  className="w-20 h-9 text-center"
+                                  value={setting.days_before || 30}
+                                  onChange={e => {
+                                    const updated = notifSettings.map(s =>
+                                      s.type === key ? { ...s, days_before: parseInt(e.target.value) } : s
+                                    );
+                                    setNotifSettings(updated);
+                                  }}
                                 />
                                 <span>天提醒</span>
                               </>
@@ -279,14 +398,16 @@ export const AdminNotificationCenter: React.FC = () => {
                             {key === 'credits_low' && (
                               <>
                                 <span>剩餘堂數低於</span>
-                                <Input 
-                                  type="number" 
-                                  className="w-20 h-9 text-center" 
-                                  value={setting.threshold}
-                                  onChange={e => setSettings(prev => ({
-                                    ...prev,
-                                    [key]: { ...prev[key], threshold: parseInt(e.target.value) }
-                                  }))}
+                                <Input
+                                  type="number"
+                                  className="w-20 h-9 text-center"
+                                  value={setting.threshold || 4}
+                                  onChange={e => {
+                                    const updated = notifSettings.map(s =>
+                                      s.type === key ? { ...s, threshold: parseInt(e.target.value) } : s
+                                    );
+                                    setNotifSettings(updated);
+                                  }}
                                 />
                                 <span>堂時提醒</span>
                               </>
@@ -294,14 +415,16 @@ export const AdminNotificationCenter: React.FC = () => {
                             {key === 'unpaid' && (
                               <>
                                 <span>報名後超過</span>
-                                <Input 
-                                  type="number" 
-                                  className="w-20 h-9 text-center" 
-                                  value={setting.daysAfter}
-                                  onChange={e => setSettings(prev => ({
-                                    ...prev,
-                                    [key]: { ...prev[key], daysAfter: parseInt(e.target.value) }
-                                  }))}
+                                <Input
+                                  type="number"
+                                  className="w-20 h-9 text-center"
+                                  value={setting.days_after || 7}
+                                  onChange={e => {
+                                    const updated = notifSettings.map(s =>
+                                      s.type === key ? { ...s, days_after: parseInt(e.target.value) } : s
+                                    );
+                                    setNotifSettings(updated);
+                                  }}
                                 />
                                 <span>天未繳費提醒</span>
                               </>
@@ -315,10 +438,22 @@ export const AdminNotificationCenter: React.FC = () => {
               </div>
 
               <div className="p-8 bg-neutral-50/50 border-t border-neutral-100">
-                <Button 
-                  variant="primary" 
+                <Button
+                  variant="primary"
                   className="w-full h-14 rounded-2xl shadow-lg shadow-primary/20"
-                  onClick={() => setShowSettings(false)}
+                  onClick={async () => {
+                    // Save each setting to DB
+                    for (const s of notifSettings) {
+                      await supabase.from('notification_settings').update({
+                        enabled: s.enabled,
+                        days_before: s.days_before,
+                        threshold: s.threshold,
+                        days_after: s.days_after,
+                      }).eq('type', s.type);
+                    }
+                    setShowSettings(false);
+                    fetchNotifications();
+                  }}
                 >
                   儲存設定
                 </Button>
@@ -332,25 +467,25 @@ export const AdminNotificationCenter: React.FC = () => {
 };
 
 interface NotificationCardProps {
-  notification: Notification;
+  notification: any;
   onMarkAsRead: () => void;
   onAction: () => void;
 }
 
 const NotificationCard: React.FC<NotificationCardProps> = ({ notification, onMarkAsRead, onAction }) => {
-  const config = NOTIFICATION_TYPE_CONFIG[notification.type];
-  const priority = PRIORITY_CONFIG[notification.priority];
+  const config = NOTIFICATION_TYPE_CONFIG[notification.type] || NOTIFICATION_TYPE_CONFIG['new_enrollment'];
+  const priority = PRIORITY_CONFIG[notification.priority] || PRIORITY_CONFIG['low'];
 
   return (
     <div className={`relative flex items-start gap-5 p-6 transition-all ${notification.read ? 'bg-white' : 'bg-[#FAFCFF]'}`}>
       {!notification.read && (
-        <div 
-          className="absolute left-0 top-0 bottom-0 w-1" 
+        <div
+          className="absolute left-0 top-0 bottom-0 w-1"
           style={{ backgroundColor: config.color }}
         />
       )}
 
-      <div 
+      <div
         className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0"
         style={{ backgroundColor: config.bg, border: `1px solid ${config.color}20` }}
       >
@@ -365,13 +500,13 @@ const NotificationCard: React.FC<NotificationCardProps> = ({ notification, onMar
             </h4>
             {!notification.read && <div className="w-2 h-2 bg-primary rounded-full" />}
             <div className="flex items-center gap-1.5 ml-2">
-              <Badge 
+              <Badge
                 style={{ color: priority.color, backgroundColor: priority.bg }}
                 className="px-2 py-0.5 rounded-full text-[10px] border-none"
               >
                 {priority.label}
               </Badge>
-              <Badge 
+              <Badge
                 style={{ color: config.color, backgroundColor: config.bg }}
                 className="px-2 py-0.5 rounded-full text-[10px] border-none"
               >
@@ -379,7 +514,7 @@ const NotificationCard: React.FC<NotificationCardProps> = ({ notification, onMar
               </Badge>
             </div>
           </div>
-          <span className="text-xs text-neutral-400">{notification.time}</span>
+          <span className="text-xs text-neutral-400">{notification.created_at ? new Date(notification.created_at).toLocaleString('zh-TW') : notification.time}</span>
         </div>
 
         <p className="text-sm text-neutral-500 leading-relaxed">
@@ -387,26 +522,26 @@ const NotificationCard: React.FC<NotificationCardProps> = ({ notification, onMar
         </p>
 
         <div className="flex items-center gap-3 pt-2">
-          {notification.actionLabel && (
-            <Button 
-              variant={notification.actionDone ? 'ghost' : 'primary'}
-              disabled={notification.actionDone}
-              className={`h-9 px-5 rounded-xl text-xs font-bold ${notification.actionDone ? 'bg-neutral-100 text-neutral-400' : 'shadow-md shadow-primary/10'}`}
+          {notification.action_label && (
+            <Button
+              variant={notification.action_done ? 'ghost' : 'primary'}
+              disabled={notification.action_done}
+              className={`h-9 px-5 rounded-xl text-xs font-bold ${notification.action_done ? 'bg-neutral-100 text-neutral-400' : 'shadow-md shadow-primary/10'}`}
               onClick={onAction}
             >
-              {notification.actionDone ? (
+              {notification.action_done ? (
                 <span className="flex items-center gap-1"><Check size={14} /> 已處理</span>
-              ) : notification.actionLabel}
+              ) : notification.action_label}
             </Button>
           )}
-          
+
           {notification.read ? (
             <span className="text-xs text-neutral-400 font-medium flex items-center gap-1 px-2">
               <Check size={14} /> 已讀
             </span>
           ) : (
-            <Button 
-              variant="ghost" 
+            <Button
+              variant="ghost"
               className="h-9 px-5 rounded-xl text-xs text-neutral-500 border border-neutral-200 bg-white hover:bg-neutral-50"
               onClick={onMarkAsRead}
             >

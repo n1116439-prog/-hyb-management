@@ -55,10 +55,22 @@ Deno.serve(async (req) => {
 
       if (!enrollments || enrollments.length === 0) continue
 
-      // 自動標記全部出席
-      const attendanceInserts = enrollments.map(e => ({
+      // 過濾有堂數的學員
+      const studentIds = enrollments.map(e => e.student_id)
+      const { data: validCredits } = await supabase
+        .from('credits')
+        .select('student_id')
+        .in('student_id', studentIds)
+        .eq('status', 'active')
+        .gt('remaining_credits', 0)
+
+      const validStudentIds = validCredits?.map(c => c.student_id) || []
+      if (validStudentIds.length === 0) continue
+
+      // 只對有堂數的學員自動點名
+      const attendanceInserts = validStudentIds.map(sid => ({
         course_id: course.id,
-        student_id: e.student_id,
+        student_id: sid,
         date: yesterdayStr,
         status: '出席',
         deducted: true,
@@ -70,12 +82,14 @@ Deno.serve(async (req) => {
         continue
       }
 
-      // 扣堂數
-      for (const e of enrollments) {
+      // 扣堂數（只對有堂數的學員）
+      for (const sid of validStudentIds) {
         const { data: credit } = await supabase
           .from('credits')
           .select('id, used_credits, remaining_credits')
-          .eq('student_id', e.student_id)
+          .eq('student_id', sid)
+          .eq('status', 'active')
+          .gt('remaining_credits', 0)
           .single()
 
         if (credit && credit.remaining_credits > 0) {
@@ -87,7 +101,7 @@ Deno.serve(async (req) => {
       }
 
       totalMarked++
-      console.log(`Auto-marked: ${course.name} on ${yesterdayStr}, ${enrollments.length} students`)
+      console.log(`Auto-marked: ${course.name} on ${yesterdayStr}, ${validStudentIds.length} students (${enrollments.length} enrolled)`)
     }
 
     return new Response(
