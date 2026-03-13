@@ -32,6 +32,32 @@ export const RegisterPage: React.FC<{ courses: Course[]; initialCourseId?: strin
   const [calendarYear, setCalendarYear] = useState(() => new Date().getFullYear());
   const [calendarMonth, setCalendarMonth] = useState(() => new Date().getMonth());
 
+  const [paymentInfo, setPaymentInfo] = useState({
+    bank_name: '中國信託',
+    bank_code: '822',
+    account_number: '1234-5678-9012-3456',
+    account_name: '恆躍資訊有限公司',
+    line_url: 'https://lin.ee/placeholder',
+    notes: '匯款完成後，請至官方 Line 回覆匯款資訊（匯款帳號末五碼），我們將於確認後開通您的堂數。',
+  })
+
+  // 讀取匯款資料
+  useEffect(() => {
+    const fetchPaymentInfo = async () => {
+      try {
+        const { data } = await supabase
+          .from('system_settings')
+          .select('value')
+          .eq('key', 'payment_info')
+          .single()
+        if (data?.value) setPaymentInfo(data.value)
+      } catch (e) {
+        console.log('system_settings 表不存在，使用預設值')
+      }
+    }
+    fetchPaymentInfo()
+  }, [])
+
   // 從 Supabase 讀取方案
   useEffect(() => {
     const fetchPlans = async () => {
@@ -341,21 +367,26 @@ export const RegisterPage: React.FC<{ courses: Course[]; initialCourseId?: strin
           <div className="space-y-3 text-sm">
             <div className="flex justify-between">
               <span className="text-neutral-500">銀行</span>
-              <span className="font-bold">中國信託（822）</span>
+              <span className="font-bold">{paymentInfo.bank_name}（{paymentInfo.bank_code}）</span>
             </div>
             <div className="flex justify-between">
               <span className="text-neutral-500">帳號</span>
-              <span className="font-bold">1234-5678-9012-3456</span>
+              <span className="font-bold">{paymentInfo.account_number}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-neutral-500">戶名</span>
-              <span className="font-bold">恆躍羽球學院</span>
+              <span className="font-bold">{paymentInfo.account_name}</span>
             </div>
             <div className="h-px bg-neutral-100" />
             <div className="flex justify-between items-center">
               <span className="text-neutral-500">應付金額</span>
               <span className="text-xl font-black text-primary">NT$ {finalPrice.toLocaleString()}</span>
             </div>
+            {paymentInfo.notes && (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mt-2">
+                <p className="text-amber-800 text-xs">{paymentInfo.notes}</p>
+              </div>
+            )}
           </div>
         </div>
 
@@ -389,7 +420,7 @@ export const RegisterPage: React.FC<{ courses: Course[]; initialCourseId?: strin
         )}
 
         <div className="w-full flex flex-col gap-3 mt-4">
-          <Button onClick={() => window.open('https://line.me/R/', '_blank')}>
+          <Button onClick={() => window.open(paymentInfo.line_url || 'https://line.me/R/', '_blank')}>
             前往官方 Line 回覆
           </Button>
           <Button variant="outline" onClick={() => {

@@ -57,6 +57,13 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
   const [makeupCourseMap, setMakeupCourseMap] = useState<Record<string, string>>({})
   const [allCoursesList, setAllCoursesList] = useState<any[]>([])
   const [studentCreditInfo, setStudentCreditInfo] = useState<Record<string, any>>({})
+  const [courseHolidays, setCourseHolidays] = useState<any[]>([])
+  const [newHolidayDate, setNewHolidayDate] = useState('')
+  const [newHolidayReason, setNewHolidayReason] = useState('')
+  const [scheduleMonth, setScheduleMonth] = useState(() => {
+    const now = new Date()
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+  })
 
   const fetchCoaches = async () => {
     const { data } = await supabase
@@ -116,6 +123,45 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
       payments: payments || [],
     })
     setShowStudentDetailModal(true)
+  }
+
+  const fetchCourseHolidays = async (courseId: string) => {
+    const { data } = await supabase
+      .from('messages')
+      .select('*')
+      .eq('course_id', courseId)
+      .eq('type', 'course_update')
+      .order('created_at', { ascending: false })
+
+    if (data) {
+      setCourseHolidays(data.map(m => ({
+        id: m.id,
+        date: m.title,
+        reason: m.content,
+      })))
+    }
+  }
+
+  const addHoliday = async () => {
+    if (!selectedCourse || !newHolidayDate) return
+
+    await supabase.from('messages').insert({
+      type: 'course_update',
+      title: newHolidayDate,
+      content: newHolidayReason || '停課',
+      course_id: selectedCourse.id,
+      recipient_type: 'course',
+      recipient_id: selectedCourse.id,
+    })
+
+    setNewHolidayDate('')
+    setNewHolidayReason('')
+    fetchCourseHolidays(selectedCourse.id)
+  }
+
+  const removeHoliday = async (messageId: string) => {
+    await supabase.from('messages').delete().eq('id', messageId)
+    if (selectedCourse) fetchCourseHolidays(selectedCourse.id)
   }
 
   const handleThumbnailUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -322,7 +368,7 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
   const [showImportModal, setShowImportModal] = useState(false);
   const [importCategory, setImportCategory] = useState<'all' | 'children' | 'adult'>('all');
   const [importedStudents, setImportedStudents] = useState<{name: string, phone: string, category: 'children' | 'adult'}[]>([]);
-  const [editTab, setEditTab] = useState<'info' | 'students' | 'coaches' | 'history' | 'attendance'>('info');
+  const [editTab, setEditTab] = useState<'info' | 'students' | 'coaches' | 'schedule' | 'history' | 'attendance'>('info');
   const [selectedDate, setSelectedDate] = useState<string>('');
   const [step, setStep] = useState(1);
   const [searchQuery, setSearchQuery] = useState('');
@@ -726,6 +772,12 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
     }
   }, [selectedCourse, editTab, selectedAttendanceDate])
 
+  useEffect(() => {
+    if (selectedCourse && (editTab === 'schedule' || editTab === 'attendance')) {
+      fetchCourseHolidays(selectedCourse.id)
+    }
+  }, [selectedCourse, editTab])
+
   const saveAttendance = async () => {
     if (!selectedCourse) return
     setAttendanceSaving(true)
@@ -1063,6 +1115,7 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
                     { id: 'info', label: '基本資訊', icon: Settings },
                     { id: 'students', label: '學員名單', icon: Users },
                     { id: 'coaches', label: '教練管理', icon: ClipboardList },
+                    { id: 'schedule', label: '日期管理', icon: Calendar },
                     { id: 'attendance', label: '點名紀錄', icon: UserCheck },
                     { id: 'history', label: '異動紀錄', icon: HistoryIcon }
                   ].map(tab => (
@@ -1264,6 +1317,108 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
                       </div>
                     )}
 
+                    {editTab === 'schedule' && selectedCourse && (
+                      <div className="space-y-6">
+                        {/* 月份選擇 + 課程日曆 */}
+                        <div>
+                          <div className="flex items-center justify-between mb-3">
+                            <button onClick={() => {
+                              const [y, m] = scheduleMonth.split('-').map(Number)
+                              setScheduleMonth(m === 1 ? `${y-1}-12` : `${y}-${String(m-1).padStart(2, '0')}`)
+                            }} className="p-2 hover:bg-neutral-100 rounded-lg">←</button>
+                            <p className="font-bold">{scheduleMonth.replace('-', ' 年 ')} 月</p>
+                            <button onClick={() => {
+                              const [y, m] = scheduleMonth.split('-').map(Number)
+                              setScheduleMonth(m === 12 ? `${y+1}-01` : `${y}-${String(m+1).padStart(2, '0')}`)
+                            }} className="p-2 hover:bg-neutral-100 rounded-lg">→</button>
+                          </div>
+
+                          {/* 顯示該月所有上課日 */}
+                          {(() => {
+                            const weekdayMap: Record<string, number> = {
+                              '週日': 0, '週一': 1, '週二': 2, '週三': 3, '週四': 4, '週五': 5, '週六': 6
+                            }
+                            const targetDay = weekdayMap[selectedCourse.schedule]
+                            const [year, month] = scheduleMonth.split('-').map(Number)
+                            const dates: string[] = []
+                            const d = new Date(year, month - 1, 1)
+                            while (d.getMonth() === month - 1) {
+                              if (d.getDay() === targetDay) dates.push(d.toISOString().split('T')[0])
+                              d.setDate(d.getDate() + 1)
+                            }
+
+                            return (
+                              <div className="grid grid-cols-4 gap-2">
+                                {dates.map((date, idx) => {
+                                  const holiday = courseHolidays.find(h => h.date === date)
+                                  const isPast = new Date(date) < new Date(new Date().setHours(0,0,0,0))
+                                  return (
+                                    <div key={date} className={`rounded-xl p-3 text-center border-2 ${
+                                      holiday ? 'bg-red-50 border-red-300' : isPast ? 'bg-neutral-50 border-neutral-200' : 'bg-white border-primary/20'
+                                    }`}>
+                                      <p className="text-xs text-neutral-500">第{idx + 1}週</p>
+                                      <p className="font-bold text-sm">{date.slice(5)}</p>
+                                      <p className="text-xs text-neutral-500">{selectedCourse.schedule}</p>
+                                      {holiday ? (
+                                        <div className="mt-1">
+                                          <span className="text-xs bg-red-100 text-red-600 px-1.5 py-0.5 rounded">停課</span>
+                                          <p className="text-xs text-red-500 mt-0.5">{holiday.reason}</p>
+                                          <button onClick={() => removeHoliday(holiday.id)} className="text-xs text-red-400 underline mt-1">取消停課</button>
+                                        </div>
+                                      ) : !isPast ? (
+                                        <button onClick={() => {
+                                          setNewHolidayDate(date)
+                                          setNewHolidayReason('')
+                                        }} className="text-xs text-primary mt-1">標記停課</button>
+                                      ) : (
+                                        <span className="text-xs text-green-500 mt-1 block">已上課</span>
+                                      )}
+                                    </div>
+                                  )
+                                })}
+                              </div>
+                            )
+                          })()}
+                        </div>
+
+                        {/* 新增停課表單 */}
+                        {newHolidayDate && (
+                          <div className="bg-red-50 rounded-xl p-4 space-y-3">
+                            <p className="font-bold text-red-700">標記停課 — {newHolidayDate}</p>
+                            <FormField label="停課原因">
+                              <Input
+                                value={newHolidayReason}
+                                onChange={e => setNewHolidayReason(e.target.value)}
+                                placeholder="例如：國定假日、場館維修"
+                              />
+                            </FormField>
+                            <div className="flex gap-2">
+                              <button onClick={() => setNewHolidayDate('')} className="flex-1 py-2 bg-white rounded-lg border text-sm">取消</button>
+                              <button onClick={addHoliday} className="flex-1 py-2 bg-red-500 text-white rounded-lg text-sm font-medium">確認停課</button>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* 停課列表 */}
+                        {courseHolidays.length > 0 && (
+                          <div>
+                            <p className="text-sm font-medium text-neutral-700 mb-2">已標記的停課日</p>
+                            <div className="space-y-2">
+                              {courseHolidays.map(h => (
+                                <div key={h.id} className="flex items-center justify-between bg-red-50 rounded-lg p-3">
+                                  <div>
+                                    <p className="font-medium text-sm text-red-700">{h.date}</p>
+                                    <p className="text-xs text-red-500">{h.reason}</p>
+                                  </div>
+                                  <button onClick={() => removeHoliday(h.id)} className="text-xs text-red-400 hover:text-red-600">移除</button>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
                     {editTab === 'attendance' && (
                       <div className="space-y-6">
                         <div className="space-y-4">
@@ -1335,21 +1490,25 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
                                   const d = new Date(date)
                                   const isSelected = date === selectedAttendanceDate
                                   const isPast = d < new Date(new Date().setHours(0,0,0,0))
+                                  const isHoliday = courseHolidays.some(h => h.date === date)
                                   return (
                                     <button
                                       key={date}
-                                      onClick={() => setSelectedAttendanceDate(date)}
+                                      onClick={() => !isHoliday && setSelectedAttendanceDate(date)}
                                       className={`flex-shrink-0 w-20 py-3 rounded-xl text-center transition-all ${
-                                        isSelected
-                                          ? 'bg-primary text-white shadow-md'
-                                          : isPast
-                                            ? 'bg-neutral-100 text-neutral-500 hover:bg-neutral-200'
-                                            : 'bg-white border border-neutral-200 text-neutral-700 hover:border-primary'
+                                        isHoliday
+                                          ? 'bg-red-50 text-red-400 cursor-not-allowed'
+                                          : isSelected
+                                            ? 'bg-primary text-white shadow-md'
+                                            : isPast
+                                              ? 'bg-neutral-100 text-neutral-500 hover:bg-neutral-200'
+                                              : 'bg-white border border-neutral-200 text-neutral-700 hover:border-primary'
                                       }`}
                                     >
                                       <p className="text-xs font-medium">{`第${idx + 1}週`}</p>
                                       <p className="text-sm font-bold mt-0.5">{`${d.getMonth()+1}/${d.getDate()}`}</p>
                                       <p className="text-xs mt-0.5">{selectedCourse?.schedule}</p>
+                                      {isHoliday && <p className="text-xs text-red-400 mt-0.5">停課</p>}
                                     </button>
                                   )
                                 })}

@@ -10,6 +10,8 @@ import { AdminContractManagement } from './components/AdminContractManagement';
 import { AdminNotificationCenter } from './components/AdminNotificationCenter';
 import { AdminCoachManagement } from './components/AdminCoachManagement';
 import { AdminRevenue } from './components/AdminRevenue';
+import { AdminPromoManagement } from './components/AdminPromoManagement';
+import { AdminSettings } from './components/AdminSettings';
 import { AdminAttendance } from './components/AdminAttendance';
 import { LogIn, ShieldCheck, User } from 'lucide-react';
 import { Button, FormField, Input } from './components/UI';
@@ -592,7 +594,9 @@ export default function App() {
         case 'admin-revenue': return <AdminRevenue />;
         case 'admin-attendance': return <AdminAttendance />;
         case 'admin-contracts': return <AdminContractManagement contracts={contracts} setContracts={setContracts} />;
+        case 'admin-promo': return <AdminPromoManagement />;
         case 'admin-notifications': return <AdminNotificationCenter />;
+        case 'admin-settings': return <AdminSettings />;
         default: return <AdminDashboard />;
       }
     }

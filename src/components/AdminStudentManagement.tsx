@@ -95,6 +95,7 @@ export const AdminStudentManagement: React.FC<{
 
   useEffect(() => {
     fetchStudents()
+    fetchAllCourses()
   }, [])
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -104,6 +105,16 @@ export const AdminStudentManagement: React.FC<{
   const [isEditing, setIsEditing] = useState(false);
   const [editForm, setEditForm] = useState<any>({});
   const [usageHistory, setUsageHistory] = useState<any[]>([])
+
+  const [showCreditModal, setShowCreditModal] = useState(false)
+  const [showEnrollModal, setShowEnrollModal] = useState(false)
+  const [operatingStudent, setOperatingStudent] = useState<any>(null)
+  const [creditAction, setCreditAction] = useState<'add' | 'subtract'>('add')
+  const [creditAmount, setCreditAmount] = useState(1)
+  const [creditReason, setCreditReason] = useState('')
+  const [allCourses, setAllCourses] = useState<any[]>([])
+  const [studentEnrollments, setStudentEnrollments] = useState<any[]>([])
+  const [studentCreditsDetail, setStudentCreditsDetail] = useState<any[]>([])
 
   const fetchStudentAttendance = async (studentId: string) => {
     const { data } = await supabase
@@ -121,6 +132,110 @@ export const AdminStudentManagement: React.FC<{
       courseTime: (a.courses as any)?.time || '',
       location: (a.courses as any)?.venues?.name || '',
     })))
+  }
+
+  const fetchAllCourses = async () => {
+    const { data } = await supabase.from('courses').select('id, name, category, day_of_week, start_time, end_time, venues(name)')
+    if (data) setAllCourses(data)
+  }
+
+  const fetchStudentDetail = async (studentId: string) => {
+    const { data: enrollments } = await supabase
+      .from('enrollments')
+      .select('*, courses(id, name, day_of_week, start_time, end_time, venues(name))')
+      .eq('student_id', studentId)
+    setStudentEnrollments(enrollments || [])
+
+    const { data: credits } = await supabase
+      .from('credits')
+      .select('*')
+      .eq('student_id', studentId)
+    setStudentCreditsDetail(credits || [])
+  }
+
+  const handleCreditChange = async () => {
+    if (!operatingStudent || creditAmount <= 0) return
+
+    const credit = studentCreditsDetail.find((c: any) => c.status === 'active')
+
+    if (!credit && creditAction === 'subtract') {
+      alert('該學員沒有可用堂數')
+      return
+    }
+
+    if (credit) {
+      const newRemaining = creditAction === 'add'
+        ? credit.remaining_credits + creditAmount
+        : Math.max(0, credit.remaining_credits - creditAmount)
+      const newTotal = creditAction === 'add'
+        ? credit.total_credits + creditAmount
+        : credit.total_credits
+
+      await supabase.from('credits').update({
+        total_credits: newTotal,
+        remaining_credits: newRemaining,
+      }).eq('id', credit.id)
+    } else {
+      await supabase.from('credits').insert({
+        student_id: operatingStudent.id,
+        total_credits: creditAmount,
+        used_credits: 0,
+        remaining_credits: creditAmount,
+        status: 'active',
+      })
+    }
+
+    alert(`${creditAction === 'add' ? '加' : '減'} ${creditAmount} 堂成功`)
+    setShowCreditModal(false)
+    setCreditAmount(1)
+    setCreditReason('')
+    fetchStudents()
+    fetchStudentDetail(operatingStudent.id)
+  }
+
+  const handleEnrollCourse = async (courseId: string) => {
+    if (!operatingStudent) return
+
+    const existing = studentEnrollments.find((e: any) => e.course_id === courseId && e.status === '已報名')
+    if (existing) {
+      alert('該學員已報名此班級')
+      return
+    }
+
+    const hasCredits = studentCreditsDetail.some((c: any) => c.status === 'active' && c.remaining_credits > 0)
+    if (!hasCredits) {
+      alert('該學員沒有可用堂數，請先加堂')
+      return
+    }
+
+    await supabase.from('enrollments').insert({
+      student_id: operatingStudent.id,
+      course_id: courseId,
+      status: '已報名',
+    })
+
+    alert('劃位成功')
+    fetchStudentDetail(operatingStudent.id)
+    fetchStudents()
+  }
+
+  const handleTransfer = async (fromEnrollmentId: string, toCourseId: string) => {
+    if (!operatingStudent) return
+
+    await supabase.from('enrollments').update({
+      status: '已退出',
+      withdrawn_at: new Date().toISOString(),
+    }).eq('id', fromEnrollmentId)
+
+    await supabase.from('enrollments').insert({
+      student_id: operatingStudent.id,
+      course_id: toCourseId,
+      status: '已報名',
+    })
+
+    alert('轉班成功')
+    fetchStudentDetail(operatingStudent.id)
+    fetchStudents()
   }
 
   const handleSelectStudent = (student: any) => {
@@ -327,14 +442,38 @@ export const AdminStudentManagement: React.FC<{
                     >
                       <Eye size={16} />
                     </button>
-                    <button 
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setOperatingStudent(student)
+                        fetchStudentDetail(student.id)
+                        setShowCreditModal(true)
+                      }}
+                      className="w-9 h-9 flex items-center justify-center rounded-xl bg-neutral-50 text-neutral-400 hover:bg-blue-50 hover:text-blue-600 transition-colors"
+                      title="加減堂"
+                    >
+                      <span className="text-sm font-bold">±</span>
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setOperatingStudent(student)
+                        fetchStudentDetail(student.id)
+                        setShowEnrollModal(true)
+                      }}
+                      className="w-9 h-9 flex items-center justify-center rounded-xl bg-neutral-50 text-neutral-400 hover:bg-green-50 hover:text-green-600 transition-colors"
+                      title="劃位/轉班"
+                    >
+                      <ChevronRight size={16} />
+                    </button>
+                    <button
                       onClick={() => handleConfirmPayment(student.id)}
                       className="w-9 h-9 flex items-center justify-center rounded-xl bg-neutral-50 text-neutral-400 hover:bg-primary/10 hover:text-primary transition-colors"
                       title="確認繳費"
                     >
                       <CreditCard size={16} />
                     </button>
-                    <button 
+                    <button
                       onClick={() => handleDeleteStudent(student.id)}
                       className="w-9 h-9 flex items-center justify-center rounded-xl bg-neutral-50 text-neutral-400 hover:bg-danger/10 hover:text-danger transition-colors"
                       title="刪除學員"
@@ -675,6 +814,115 @@ export const AdminStudentManagement: React.FC<{
           </div>
         )}
       </AnimatePresence>
+
+      {/* 加堂/減堂 Modal */}
+      {showCreditModal && operatingStudent && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowCreditModal(false)}>
+          <div className="bg-white rounded-2xl w-full max-w-sm p-6 space-y-4" onClick={e => e.stopPropagation()}>
+            <h3 className="text-lg font-bold">加減堂數 — {operatingStudent.studentName} ({operatingStudent.studentNumber})</h3>
+
+            <div className="bg-neutral-50 rounded-xl p-3 text-center">
+              <p className="text-sm text-neutral-500">目前剩餘堂數</p>
+              <p className="text-3xl font-bold text-primary">{operatingStudent.remainingCredits || 0}</p>
+            </div>
+
+            <div className="flex gap-2">
+              <button onClick={() => setCreditAction('add')}
+                className={`flex-1 py-2 rounded-lg font-medium ${creditAction === 'add' ? 'bg-green-500 text-white' : 'bg-green-50 text-green-700 border border-green-200'}`}
+              >+ 加堂</button>
+              <button onClick={() => setCreditAction('subtract')}
+                className={`flex-1 py-2 rounded-lg font-medium ${creditAction === 'subtract' ? 'bg-red-500 text-white' : 'bg-red-50 text-red-700 border border-red-200'}`}
+              >- 減堂</button>
+            </div>
+
+            <FormField label="堂數">
+              <Input type="number" min={1} value={creditAmount} onChange={e => setCreditAmount(parseInt(e.target.value) || 1)} />
+            </FormField>
+
+            <FormField label="原因（選填）">
+              <Input value={creditReason} onChange={e => setCreditReason(e.target.value)} placeholder="例如：補償、退費調整" />
+            </FormField>
+
+            <div className="flex gap-3">
+              <button onClick={() => setShowCreditModal(false)} className="flex-1 py-3 bg-neutral-100 rounded-xl">取消</button>
+              <button onClick={handleCreditChange} className={`flex-1 py-3 text-white rounded-xl font-medium ${creditAction === 'add' ? 'bg-green-500' : 'bg-red-500'}`}>
+                確認{creditAction === 'add' ? '加' : '減'} {creditAmount} 堂
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 劃位/轉班 Modal */}
+      {showEnrollModal && operatingStudent && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowEnrollModal(false)}>
+          <div className="bg-white rounded-2xl w-full max-w-lg max-h-[80vh] overflow-y-auto p-6 space-y-4" onClick={e => e.stopPropagation()}>
+            <h3 className="text-lg font-bold">劃位/轉班 — {operatingStudent.studentName} ({operatingStudent.studentNumber})</h3>
+
+            {/* 目前報名的班級 */}
+            <div>
+              <p className="text-sm font-medium text-neutral-700 mb-2">目前班級</p>
+              {studentEnrollments.filter((e: any) => e.status === '已報名').length > 0 ? (
+                <div className="space-y-2">
+                  {studentEnrollments.filter((e: any) => e.status === '已報名').map((e: any) => (
+                    <div key={e.id} className="bg-blue-50 rounded-lg p-3 flex items-center justify-between">
+                      <div>
+                        <p className="font-medium text-sm">{e.courses?.name}</p>
+                        <p className="text-xs text-neutral-500">{e.courses?.day_of_week} {e.courses?.start_time?.slice(0,5)}-{e.courses?.end_time?.slice(0,5)}</p>
+                      </div>
+                      <select
+                        onChange={async (ev) => {
+                          if (ev.target.value && confirm(`確定要將此學員從「${e.courses?.name}」轉到新班級？`)) {
+                            await handleTransfer(e.id, ev.target.value)
+                          }
+                          ev.target.value = ''
+                        }}
+                        className="text-sm border rounded-lg px-2 py-1"
+                        defaultValue=""
+                      >
+                        <option value="">轉班 →</option>
+                        {allCourses.filter((c: any) => c.id !== e.course_id).map((c: any) => (
+                          <option key={c.id} value={c.id}>{c.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-neutral-500">尚未報名任何班級</p>
+              )}
+            </div>
+
+            {/* 劃位新班級 */}
+            <div>
+              <p className="text-sm font-medium text-neutral-700 mb-2">劃位新班級</p>
+              <div className="space-y-2 max-h-60 overflow-y-auto">
+                {allCourses
+                  .filter((c: any) => !studentEnrollments.some((e: any) => e.course_id === c.id && e.status === '已報名'))
+                  .map((course: any) => (
+                    <div key={course.id} className="border rounded-lg p-3 flex items-center justify-between hover:bg-neutral-50">
+                      <div>
+                        <p className="font-medium text-sm">{course.name}</p>
+                        <p className="text-xs text-neutral-500">
+                          {course.day_of_week} {course.start_time?.slice(0,5)}-{course.end_time?.slice(0,5)}
+                          {course.venues?.name && ` · ${course.venues.name}`}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => handleEnrollCourse(course.id)}
+                        className="px-3 py-1 bg-primary text-white text-sm rounded-lg"
+                      >
+                        劃位
+                      </button>
+                    </div>
+                  ))}
+              </div>
+            </div>
+
+            <button onClick={() => setShowEnrollModal(false)} className="w-full py-3 bg-neutral-100 rounded-xl font-medium">關閉</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

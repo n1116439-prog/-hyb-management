@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Home, ClipboardList, PenTool, Search, Menu, X, ChevronLeft, Users, FileText, Bell, LayoutDashboard, UserCheck, DollarSign, Activity } from 'lucide-react';
+import { Home, ClipboardList, PenTool, Search, Menu, X, ChevronLeft, Users, FileText, Bell, LayoutDashboard, UserCheck, DollarSign, Activity, Tag, Settings } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Badge } from './UI';
 
@@ -39,7 +39,9 @@ export const Layout: React.FC<LayoutProps> = ({
     { id: 'admin-revenue', icon: DollarSign, label: '營收管理' },
     { id: 'admin-attendance', icon: Activity, label: '出席率' },
     { id: 'admin-contracts', icon: FileText, label: '場地合約' },
+    { id: 'admin-promo', icon: Tag, label: '優惠碼' },
     { id: 'admin-notifications', icon: Bell, label: '通知中心' },
+    { id: 'admin-settings', icon: Settings, label: '設定' },
   ];
 
   const tabs = userRole === 'admin' ? adminTabs : studentTabs;
