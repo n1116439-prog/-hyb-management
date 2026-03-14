@@ -156,7 +156,14 @@ export const AdminStudentManagement: React.FC<{
   const handleCreditChange = async () => {
     if (!operatingStudent || creditAmount <= 0) return
 
-    const credit = studentCreditsDetail.find((c: any) => c.status === 'active')
+    // 從資料庫即時讀取最新 credits
+    const { data: credits } = await supabase
+      .from('credits')
+      .select('*')
+      .eq('student_id', operatingStudent.id)
+      .eq('status', 'active')
+
+    const credit = credits?.[0]
 
     if (!credit && creditAction === 'subtract') {
       alert('該學員沒有可用堂數')
@@ -171,26 +178,62 @@ export const AdminStudentManagement: React.FC<{
         ? credit.total_credits + creditAmount
         : credit.total_credits
 
-      await supabase.from('credits').update({
+      const { error } = await supabase.from('credits').update({
         total_credits: newTotal,
         remaining_credits: newRemaining,
       }).eq('id', credit.id)
+
+      if (error) {
+        alert('更新失敗：' + error.message)
+        return
+      }
     } else {
-      await supabase.from('credits').insert({
+      const expiryDate = new Date()
+      expiryDate.setDate(expiryDate.getDate() + 12 * 7)
+
+      const { error } = await supabase.from('credits').insert({
         student_id: operatingStudent.id,
         total_credits: creditAmount,
         used_credits: 0,
         remaining_credits: creditAmount,
+        leave_count: 0,
+        max_leave: 4,
+        plan_weeks: 12,
+        expiry_date: expiryDate.toISOString().split('T')[0],
         status: 'active',
       })
+
+      if (error) {
+        alert('新增失敗：' + error.message)
+        return
+      }
     }
 
-    alert(`${creditAction === 'add' ? '加' : '減'} ${creditAmount} 堂成功`)
+    // 寫入操作日誌
+    const { data: { user } } = await supabase.auth.getUser()
+    await supabase.from('audit_logs').insert({
+      user_id: user?.id || null,
+      user_email: user?.email || 'admin',
+      action: creditAction === 'add' ? '管理員加堂' : '管理員減堂',
+      table_name: 'credits',
+      record_id: credit?.id || null,
+      old_data: credit ? { remaining: credit.remaining_credits, total: credit.total_credits } : null,
+      new_data: {
+        amount: creditAmount,
+        reason: creditReason,
+        action: creditAction,
+      },
+    })
+
+    alert(`${creditAction === 'add' ? '加' : '減'} ${creditAmount} 堂成功！`)
+
     setShowCreditModal(false)
     setCreditAmount(1)
     setCreditReason('')
-    fetchStudents()
-    fetchStudentDetail(operatingStudent.id)
+    setOperatingStudent(null)
+
+    // 重新載入學員資料
+    await fetchStudents()
   }
 
   const handleEnrollCourse = async (courseId: string) => {

@@ -45,108 +45,122 @@ export function SessionsPage({ courses, userRole, waitlists, userCategory }: Ses
   const [expandedStudentId, setExpandedStudentId] = useState<string | null>(null)
   const [activeStudentTab, setActiveStudentTab] = useState<Record<string, 'courses' | 'records'>>({})
 
-  useEffect(() => {
-    const fetchEnrollments = async (studentIds: string[], studentList: any[]) => {
-      const { data: enrollments } = await supabase
-        .from('enrollments')
-        .select('*, courses(name, category, day_of_week, start_time, end_time, price, venues(name))')
-        .in('student_id', studentIds)
-        .eq('status', '已報名')
-        .order('enrolled_at', { ascending: false })
+  const fetchEnrollments = async (studentIds: string[], studentList: any[]) => {
+    const { data: enrollments } = await supabase
+      .from('enrollments')
+      .select('*, courses(name, category, day_of_week, start_time, end_time, price, venues(name))')
+      .in('student_id', studentIds)
+      .eq('status', '已報名')
+      .order('enrolled_at', { ascending: false })
 
-      // 讀取每位學員的堂數
-      const { data: credits } = await supabase
-        .from('credits')
-        .select('*')
-        .in('student_id', studentIds)
+    // 讀取每位學員的堂數
+    const { data: credits } = await supabase
+      .from('credits')
+      .select('*')
+      .in('student_id', studentIds)
 
-      // 讀取每位學員的出缺席紀錄
-      const { data: allAttendance } = await supabase
-        .from('attendance')
-        .select('*, courses(name, day_of_week, start_time, end_time, venues(name))')
-        .in('student_id', studentIds)
-        .order('date', { ascending: false })
+    // 讀取每位學員的出缺席紀錄
+    const { data: allAttendance } = await supabase
+      .from('attendance')
+      .select('*, courses(name, day_of_week, start_time, end_time, venues(name))')
+      .in('student_id', studentIds)
+      .order('date', { ascending: false })
 
-      setStudentCredits(studentList.map((s: any) => {
-        const credit = credits?.find((c: any) => c.student_id === s.id)
-        const studentEnrollments = enrollments?.filter((e: any) => e.student_id === s.id) || []
-        const studentAttendance = allAttendance?.filter((a: any) => a.student_id === s.id) || []
+    setStudentCredits(studentList.map((s: any) => {
+      const credit = credits?.find((c: any) => c.student_id === s.id)
+      const studentEnrollments = enrollments?.filter((e: any) => e.student_id === s.id) || []
+      const studentAttendance = allAttendance?.filter((a: any) => a.student_id === s.id) || []
 
-        return {
-          id: s.id,
-          name: s.name,
-          studentNumber: s.student_code || s.student_number || '',
-          category: s.category || 'child',
-          totalCredits: credit?.total_credits || 0,
-          usedCredits: credit?.used_credits || 0,
-          remainingCredits: credit?.remaining_credits || 0,
-          leaveCount: credit?.leave_count || 0,
-          maxLeave: credit?.max_leave || 0,
-          expiryDate: credit?.expiry_date || '',
-          planWeeks: credit?.plan_weeks || 0,
-          courses: studentEnrollments.map((e: any) => {
-            const weekdayMap: Record<string, number> = {
-              '週日': 0, '週一': 1, '週二': 2, '週三': 3,
-              '週四': 4, '週五': 5, '週六': 6
+      return {
+        id: s.id,
+        name: s.name,
+        studentNumber: s.student_code || s.student_number || '',
+        category: s.category || 'child',
+        totalCredits: credit?.total_credits || 0,
+        usedCredits: credit?.used_credits || 0,
+        remainingCredits: credit?.remaining_credits || 0,
+        leaveCount: credit?.leave_count || 0,
+        maxLeave: credit?.max_leave || 0,
+        expiryDate: credit?.expiry_date || '',
+        planWeeks: credit?.plan_weeks || 0,
+        courses: studentEnrollments.map((e: any) => {
+          const weekdayMap: Record<string, number> = {
+            '週日': 0, '週一': 1, '週二': 2, '週三': 3,
+            '週四': 4, '週五': 5, '週六': 6
+          }
+          const targetDay = weekdayMap[e.courses?.day_of_week || '']
+          let nextClassDate = ''
+          if (targetDay !== undefined) {
+            const next = new Date()
+            while (next.getDay() !== targetDay) {
+              next.setDate(next.getDate() + 1)
             }
-            const targetDay = weekdayMap[e.courses?.day_of_week || '']
-            let nextClassDate = ''
-            if (targetDay !== undefined) {
-              const next = new Date()
-              while (next.getDay() !== targetDay) {
-                next.setDate(next.getDate() + 1)
-              }
-              nextClassDate = `${next.getMonth()+1}/${next.getDate()}`
-            }
-            return {
-              id: e.id,
-              courseName: e.courses?.name || '未知',
-              schedule: e.courses?.day_of_week || '',
-              time: e.courses?.start_time && e.courses?.end_time
-                ? `${e.courses.start_time.slice(0, 5)}-${e.courses.end_time.slice(0, 5)}`
-                : '',
-              location: e.courses?.venues?.name || '',
-              nextClassDate,
-            }
-          }),
-          attendance: studentAttendance.map((a: any) => ({
-            date: a.date,
-            status: a.status,
-            deducted: a.deducted,
-            courseName: a.courses?.name || '',
-            schedule: a.courses?.day_of_week || '',
-            time: a.courses?.start_time && a.courses?.end_time
-              ? `${a.courses.start_time.slice(0, 5)}-${a.courses.end_time.slice(0, 5)}`
+            nextClassDate = `${next.getMonth()+1}/${next.getDate()}`
+          }
+          return {
+            id: e.id,
+            courseName: e.courses?.name || '未知',
+            schedule: e.courses?.day_of_week || '',
+            time: e.courses?.start_time && e.courses?.end_time
+              ? `${e.courses.start_time.slice(0, 5)}-${e.courses.end_time.slice(0, 5)}`
               : '',
-            location: a.courses?.venues?.name || '',
-          })),
-        }
-      }))
-    }
+            location: e.courses?.venues?.name || '',
+            nextClassDate,
+          }
+        }),
+        attendance: studentAttendance.map((a: any) => ({
+          date: a.date,
+          status: a.status,
+          deducted: a.deducted,
+          courseName: a.courses?.name || '',
+          schedule: a.courses?.day_of_week || '',
+          time: a.courses?.start_time && a.courses?.end_time
+            ? `${a.courses.start_time.slice(0, 5)}-${a.courses.end_time.slice(0, 5)}`
+            : '',
+          location: a.courses?.venues?.name || '',
+        })),
+      }
+    }))
+  }
 
-    const fetchSessions = async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
+  const fetchSessions = async () => {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
 
-      const { data: myStudents } = await supabase
+    const { data: myStudents } = await supabase
+      .from('students')
+      .select('id, name, student_number, student_code, category')
+      .eq('parent_uid', user.id)
+
+    if (!myStudents || myStudents.length === 0) {
+      const { data: emailMatch } = await supabase
         .from('students')
         .select('id, name, student_number, student_code, category')
-        .eq('parent_uid', user.id)
+        .eq('email', user.email)
 
-      if (!myStudents || myStudents.length === 0) {
-        const { data: emailMatch } = await supabase
-          .from('students')
-          .select('id, name, student_number, student_code, category')
-          .eq('email', user.email)
+      if (!emailMatch || emailMatch.length === 0) return
 
-        if (!emailMatch || emailMatch.length === 0) return
-
-        await fetchEnrollments(emailMatch.map(s => s.id), emailMatch)
-      } else {
-        await fetchEnrollments(myStudents.map(s => s.id), myStudents)
-      }
+      await fetchEnrollments(emailMatch.map(s => s.id), emailMatch)
+    } else {
+      await fetchEnrollments(myStudents.map(s => s.id), myStudents)
     }
+  }
+
+  useEffect(() => {
     fetchSessions()
+
+    // 訂閱 credits 變化，自動刷新
+    const channel = supabase
+      .channel('credits-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'credits' }, () => {
+        console.log('Credits changed, refetching...')
+        fetchSessions()
+      })
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
   }, [])
 
   if (userRole === 'user') {
