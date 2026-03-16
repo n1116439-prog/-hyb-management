@@ -62,7 +62,7 @@ export function SessionsPage({ courses, userRole, waitlists, userCategory }: Ses
     // 讀取每位學員的出缺席紀錄
     const { data: allAttendance } = await supabase
       .from('attendance')
-      .select('*, courses(name, day_of_week, start_time, end_time, venues(name))')
+      .select('*, courses!attendance_course_id_fkey(name, day_of_week, start_time, end_time, venues(name))')
       .in('student_id', studentIds)
       .order('date', { ascending: false })
 
