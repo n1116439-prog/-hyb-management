@@ -36,6 +36,7 @@ export const Layout: React.FC<LayoutProps> = ({
     { id: 'admin-courses', icon: ClipboardList, label: '課程管理' },
     { id: 'admin-students', icon: Users, label: '學員管理' },
     { id: 'admin-coaches', icon: UserCheck, label: '教練管理' },
+    { id: 'admin-payroll', icon: DollarSign, label: '教練薪資' },
     { id: 'admin-revenue', icon: DollarSign, label: '營收管理' },
     { id: 'admin-attendance', icon: Activity, label: '出席率' },
     { id: 'admin-contracts', icon: FileText, label: '場地合約' },

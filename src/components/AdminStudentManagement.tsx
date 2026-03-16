@@ -171,17 +171,14 @@ export const AdminStudentManagement: React.FC<{
     }
 
     if (credit) {
-      const newRemaining = creditAction === 'add'
-        ? credit.remaining_credits + creditAmount
-        : Math.max(0, credit.remaining_credits - creditAmount)
-      const newTotal = creditAction === 'add'
-        ? credit.total_credits + creditAmount
-        : credit.total_credits
+      const updateData: any = {}
+      if (creditAction === 'add') {
+        updateData.total_credits = credit.total_credits + creditAmount
+      } else {
+        updateData.used_credits = (credit.used_credits || 0) + creditAmount
+      }
 
-      const { error } = await supabase.from('credits').update({
-        total_credits: newTotal,
-        remaining_credits: newRemaining,
-      }).eq('id', credit.id)
+      const { error } = await supabase.from('credits').update(updateData).eq('id', credit.id)
 
       if (error) {
         alert('更新失敗：' + error.message)
@@ -195,7 +192,6 @@ export const AdminStudentManagement: React.FC<{
         student_id: operatingStudent.id,
         total_credits: creditAmount,
         used_credits: 0,
-        remaining_credits: creditAmount,
         leave_count: 0,
         max_leave: 4,
         plan_weeks: 12,

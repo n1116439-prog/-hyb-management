@@ -252,55 +252,59 @@ export const RegisterPage: React.FC<{ courses: Course[]; initialCourseId?: strin
       }
 
       // 為每位學員寫入堂數（使用 course_plans 資料）
-      console.log('開始寫入 credits')
-      console.log('selectedPlan:', selectedPlan)
-      console.log('formData.planId:', formData.planId)
-      console.log('plans:', plans)
+      console.log('enrollments 寫入成功，開始寫入 credits')
 
-      const planToUse = selectedPlan || plans.find(p => p.id === formData.planId) || { sessions: 1, weeks_limit: 4, max_leave: 0, price_per_session: 600 };
-      console.log('planToUse:', planToUse)
+      const selectedPlanForCredits = plans.find(p => p.id === formData.planId)
+      const planSessions = selectedPlanForCredits?.sessions || 1
+      const planWeeks = selectedPlanForCredits?.weeks_limit || 12
+      const planMaxLeave = selectedPlanForCredits?.max_leave || 0
+      const expiryDate = new Date()
+      expiryDate.setDate(expiryDate.getDate() + planWeeks * 7)
 
-      const expiryDate = new Date();
-      expiryDate.setDate(expiryDate.getDate() + (planToUse.weeks_limit || 12) * 7);
+      console.log('selectedPlanForCredits:', selectedPlanForCredits)
+      console.log('planSessions:', planSessions, 'planWeeks:', planWeeks, 'bonusSessions:', bonusSessions)
+
+      if (!selectedPlanForCredits) {
+        console.warn('找不到 selectedPlan！formData.planId:', formData.planId, '類型:', typeof formData.planId)
+        console.warn('所有 plan ids:', plans.map(p => ({ id: p.id, name: p.name, idType: typeof p.id })))
+      }
 
       for (const studentId of selectedStudentIds) {
-        console.log('寫入 credits for student:', studentId)
+        console.log('=== 寫入 credits for student:', studentId, '===')
 
         const { data: existingCredit } = await supabase
           .from('credits')
-          .select('id, total_credits, remaining_credits, leave_count')
+          .select('id, total_credits, remaining_credits')
           .eq('student_id', studentId)
           .eq('course_id', formData.courseId)
-          .single();
+          .maybeSingle()
 
-        const creditSessions = (planToUse.sessions || 1) + bonusSessions;
+        console.log('查詢既有 credits:', existingCredit)
+
+        const creditSessions = planSessions + bonusSessions;
 
         if (existingCredit) {
-          // 續購：累加堂數，延長期限
-          const { error: updateError } = await supabase.from('credits').update({
+          const { error: creditError } = await supabase.from('credits').update({
             total_credits: existingCredit.total_credits + creditSessions,
-            remaining_credits: (existingCredit.remaining_credits || 0) + creditSessions,
             expiry_date: expiryDate.toISOString().split('T')[0],
-            plan_weeks: planToUse.weeks_limit || 12,
-            max_leave: planToUse.max_leave || 0,
+            plan_weeks: planWeeks,
+            max_leave: planMaxLeave,
             status: 'active',
-          }).eq('id', existingCredit.id);
-          console.log('更新 credits 結果:', updateError)
+          }).eq('id', existingCredit.id)
+          console.log('更新 credits:', creditError || '成功')
         } else {
-          // 新增
-          const { error: insertError } = await supabase.from('credits').insert({
+          const { error: creditError } = await supabase.from('credits').insert({
             student_id: studentId,
             course_id: formData.courseId,
             total_credits: creditSessions,
             used_credits: 0,
-            remaining_credits: creditSessions,
             leave_count: 0,
-            max_leave: planToUse.max_leave || 0,
-            plan_weeks: planToUse.weeks_limit || 12,
+            max_leave: planMaxLeave,
+            plan_weeks: planWeeks,
             expiry_date: expiryDate.toISOString().split('T')[0],
             status: 'active',
-          });
-          console.log('新增 credits 結果:', insertError)
+          })
+          console.log('新增 credits:', creditError || '成功')
         }
       }
 
