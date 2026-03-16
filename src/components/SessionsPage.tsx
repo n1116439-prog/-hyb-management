@@ -66,6 +66,8 @@ export function SessionsPage({ courses, userRole, waitlists, userCategory }: Ses
       .in('student_id', studentIds)
       .order('date', { ascending: false })
 
+    console.log('attendance 查詢結果:', allAttendance)
+
     setStudentCredits(studentList.map((s: any) => {
       const credit = credits?.find((c: any) => c.student_id === s.id)
       const studentEnrollments = enrollments?.filter((e: any) => e.student_id === s.id) || []
