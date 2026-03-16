@@ -341,7 +341,6 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
             } else {
               await supabase.from('credits').update({
                 used_credits: creditToUse.used_credits + 1,
-                remaining_credits: creditToUse.remaining_credits - 1,
               }).eq('id', creditToUse.id)
             }
           }
@@ -849,10 +848,8 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
           // 扣堂調整
           if (oldDeducted && !shouldDeduct) {
             updates.used_credits = Math.max(0, creditToUpdate.used_credits - 1)
-            updates.remaining_credits = creditToUpdate.remaining_credits + 1
           } else if (!oldDeducted && shouldDeduct) {
             updates.used_credits = creditToUpdate.used_credits + 1
-            updates.remaining_credits = Math.max(0, creditToUpdate.remaining_credits - 1)
           }
 
           // 請假次數調整
@@ -902,7 +899,6 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
           const updates: Record<string, number> = {}
           if (shouldDeduct) {
             updates.used_credits = creditToUpdate.used_credits + 1
-            updates.remaining_credits = Math.max(0, creditToUpdate.remaining_credits - 1)
           }
           if (isLeave) {
             updates.leave_count = (creditToUpdate.leave_count || 0) + 1
