@@ -120,9 +120,24 @@ export function SessionsPage({ courses, userRole, waitlists, userCategory }: Ses
           const scheduleEntries: any[] = []
 
           if (targetDay !== undefined && totalSessions > 0) {
+            // 收集該學員在該課程的所有 attendance 日期（去重）
+            const courseAttendance = studentAttendance.filter((a: any) => a.course_id === courseId)
+            const attendanceDates = [...new Set(courseAttendance.map((a: any) => a.date))] as string[]
+
+            // 找出最早的 attendance 日期
             const enrolledAt = e.enrolled_at ? new Date(e.enrolled_at) : new Date()
             enrolledAt.setHours(0, 0, 0, 0)
-            const current = new Date(enrolledAt)
+            let startDate = new Date(enrolledAt)
+
+            if (attendanceDates.length > 0) {
+              const earliestAttendance = new Date(attendanceDates.sort()[0] + 'T00:00:00')
+              if (earliestAttendance < startDate) {
+                startDate = earliestAttendance
+              }
+            }
+
+            // 從起始日找到第一個對應星期的日期
+            const current = new Date(startDate)
             while (current.getDay() !== targetDay) {
               current.setDate(current.getDate() + 1)
             }
@@ -144,7 +159,7 @@ export function SessionsPage({ courses, userRole, waitlists, userCategory }: Ses
                 scheduleEntries.push({ date: dateStr, type: 'holiday', session: null, status: '連假暫停', deducted: false })
               } else {
                 sessionCount++
-                const att = studentAttendance.find((a: any) => a.date === dateStr && a.course_id === courseId)
+                const att = courseAttendance.find((a: any) => a.date === dateStr)
                 let status = '待上課'
                 if (att) {
                   status = att.status
