@@ -645,17 +645,34 @@ export const AdminStudentManagement: React.FC<{
                 {/* Course Details */}
                 <div className="space-y-4">
                   <h3 className="text-lg font-bold text-neutral-900">報名班級</h3>
-                  {selectedStudent.courses.length > 0 ? (
+                  {studentEnrollments.filter((e: any) => e.status === '已報名').length > 0 ? (
                     <div className="space-y-3">
-                      {selectedStudent.courses.map((courseName: string, idx: number) => (
-                        <div key={idx} className="p-4 rounded-2xl border border-neutral-100 flex items-center justify-between">
+                      {studentEnrollments.filter((e: any) => e.status === '已報名').map((enrollment: any) => (
+                        <div key={enrollment.id} className="p-4 rounded-2xl border border-neutral-100 flex items-center justify-between">
                           <div className="flex items-center gap-3">
                             <div className="w-10 h-10 rounded-xl bg-secondary/10 flex items-center justify-center text-secondary">
                               <Calendar size={20} />
                             </div>
-                            <p className="font-bold text-neutral-900">{courseName}</p>
+                            <p className="font-bold text-neutral-900">{(enrollment.courses as any)?.name || '未知課程'}</p>
                           </div>
-                          <Badge variant="accent" className="bg-emerald-50 text-emerald-600">上課中</Badge>
+                          <div className="flex items-center gap-2">
+                            <Badge variant="accent" className="bg-emerald-50 text-emerald-600">上課中</Badge>
+                            <button
+                              onClick={async () => {
+                                const courseName = (enrollment.courses as any)?.name || '此課程';
+                                if (!confirm(`確定要取消 ${selectedStudent.studentName} 在 ${courseName} 的報名嗎？取消後將保留剩餘堂數，僅退出該班級。`)) return;
+                                await supabase.from('enrollments').update({
+                                  status: '已退出',
+                                  withdrawn_at: new Date().toISOString(),
+                                }).eq('id', enrollment.id);
+                                fetchStudentDetail(selectedStudent.id);
+                                fetchStudents();
+                              }}
+                              className="text-xs text-red-500 hover:text-red-700 font-medium px-2 py-1 rounded-lg hover:bg-red-50 transition-colors"
+                            >
+                              取消報名
+                            </button>
+                          </div>
                         </div>
                       ))}
                     </div>

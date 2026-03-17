@@ -121,8 +121,8 @@ export const RegisterPage: React.FC<{ courses: Course[]; initialCourseId?: strin
   }
 
   const selectedStudents = myStudents.filter(s => selectedStudentIds.includes(s.id));
-  const hasAdult = selectedStudents.some(s => s.age_type === 'adult');
-  const hasChildren = selectedStudents.some(s => s.age_type !== 'adult');
+  const hasAdult = selectedStudents.some(s => s.category === 'adult');
+  const hasChildren = selectedStudents.some(s => s.category !== 'adult');
   const isMixed = hasAdult && hasChildren;
   const autoCategory: 'children' | 'adult' = hasAdult ? 'adult' : 'children';
 
@@ -504,14 +504,14 @@ export const RegisterPage: React.FC<{ courses: Course[]; initialCourseId?: strin
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-3">
                             <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold ${
-                              student.age_type === 'adult' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'
+                              student.category === 'adult' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'
                             }`}>
                               {student.name?.charAt(0)}
                             </div>
                             <div>
                               <p className="font-bold text-neutral-900">{student.name}</p>
                               <p className="text-sm text-neutral-500">
-                                {student.student_code} · {student.age_type === 'adult' ? '成人學員' : '兒童學員'}
+                                {student.student_code} · {student.category === 'adult' ? '成人學員' : '兒童學員'}
                                 {school ? ` · ${school}` : ''}
                               </p>
                             </div>
