@@ -280,6 +280,7 @@ export const AdminStudentManagement: React.FC<{
   const handleSelectStudent = (student: any) => {
     setSelectedStudent(student)
     fetchStudentAttendance(student.id)
+    fetchStudentDetail(student.id)
   }
 
   const filteredStudents = students.filter(s => {
