@@ -82,7 +82,7 @@ export function SessionsPage({ courses, userRole, waitlists, userCategory }: Ses
       .in('student_id', studentIds)
       .order('date', { ascending: false })
 
-    console.log('attendance 查詢結果:', allAttendance)
+
 
     const { data: holidays } = await supabase.from('course_holidays').select('*')
     setCourseHolidays(holidays || [])

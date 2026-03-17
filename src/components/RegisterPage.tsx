@@ -259,7 +259,7 @@ export const RegisterPage: React.FC<{ courses: Course[]; initialCourseId?: strin
       }
 
       // 為每位學員寫入堂數（使用 course_plans 資料）
-      console.log('enrollments 寫入成功，開始寫入 credits')
+
 
       const selectedPlanForCredits = plans.find(p => p.id === formData.planId)
       const planSessions = selectedPlanForCredits?.sessions || 1
@@ -268,8 +268,7 @@ export const RegisterPage: React.FC<{ courses: Course[]; initialCourseId?: strin
       const expiryDate = new Date()
       expiryDate.setDate(expiryDate.getDate() + planWeeks * 7)
 
-      console.log('selectedPlanForCredits:', selectedPlanForCredits)
-      console.log('planSessions:', planSessions, 'planWeeks:', planWeeks, 'bonusSessions:', bonusSessions)
+
 
       if (!selectedPlanForCredits) {
         console.warn('找不到 selectedPlan！formData.planId:', formData.planId, '類型:', typeof formData.planId)
@@ -277,7 +276,7 @@ export const RegisterPage: React.FC<{ courses: Course[]; initialCourseId?: strin
       }
 
       for (const studentId of selectedStudentIds) {
-        console.log('=== 寫入 credits for student:', studentId, '===')
+
 
         const { data: existingCredit } = await supabase
           .from('credits')
@@ -286,7 +285,7 @@ export const RegisterPage: React.FC<{ courses: Course[]; initialCourseId?: strin
           .eq('course_id', formData.courseId)
           .maybeSingle()
 
-        console.log('查詢既有 credits:', existingCredit)
+
 
         const creditSessions = planSessions + bonusSessions;
 
@@ -298,7 +297,7 @@ export const RegisterPage: React.FC<{ courses: Course[]; initialCourseId?: strin
             max_leave: planMaxLeave,
             status: 'active',
           }).eq('id', existingCredit.id)
-          console.log('更新 credits:', creditError || '成功')
+
         } else {
           const { error: creditError } = await supabase.from('credits').insert({
             student_id: studentId,
@@ -311,7 +310,7 @@ export const RegisterPage: React.FC<{ courses: Course[]; initialCourseId?: strin
             expiry_date: formatLocalDate(expiryDate),
             status: 'active',
           })
-          console.log('新增 credits:', creditError || '成功')
+
         }
       }
 
@@ -319,7 +318,7 @@ export const RegisterPage: React.FC<{ courses: Course[]; initialCourseId?: strin
       await supabase.from('payments').insert({
         student_id: selectedStudentIds[0],
         amount: finalPrice,
-        payment_method: '匯款',
+        payment_method: '轉帳',
         description: `${selectedStudentIds.length}位學員 - ${selectedPlan?.name || ''}`,
       });
 
@@ -557,7 +556,7 @@ export const RegisterPage: React.FC<{ courses: Course[]; initialCourseId?: strin
 
               <FormField label="選擇報名方案">
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {console.log('autoCategory:', autoCategory, 'plans:', plans.map(p => ({name: p.name, category: p.category})))}
+
                   {plans.filter(p => p.category === 'all' || p.category === autoCategory).map(plan => (
                     <button
                       key={plan.id}
