@@ -661,17 +661,18 @@ export const AdminStudentManagement: React.FC<{
                             <button
                               onClick={async () => {
                                 const courseName = (enrollment.courses as any)?.name || '此課程';
-                                if (!confirm(`確定要取消 ${selectedStudent.studentName} 在 ${courseName} 的報名嗎？取消後將保留剩餘堂數，僅退出該班級。`)) return;
+                                if (!confirm(`⚠️ 警告：確定要取消 ${selectedStudent.studentName} 在「${courseName}」的報名嗎？\n\n取消後該學員將退出此班級，需要重新劃位才能恢復。\n堂數不會扣除。`)) return;
                                 await supabase.from('enrollments').update({
                                   status: '已退出',
                                   withdrawn_at: new Date().toISOString(),
                                 }).eq('id', enrollment.id);
                                 fetchStudentDetail(selectedStudent.id);
                                 fetchStudents();
+                                alert('已取消報名。如需恢復，請使用劃位功能重新報名。');
                               }}
-                              className="text-xs text-red-500 hover:text-red-700 font-medium px-2 py-1 rounded-lg hover:bg-red-50 transition-colors"
+                              className="text-xs text-neutral-400 hover:text-neutral-600 font-medium px-2 py-1 rounded-lg hover:bg-neutral-100 transition-colors"
                             >
-                              取消報名
+                              退出班級
                             </button>
                           </div>
                         </div>
