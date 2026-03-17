@@ -41,7 +41,7 @@ export function SessionsPage({ courses, userRole, waitlists, userCategory }: Ses
       courseId: string
       scheduleEntries: {
         date: string
-        type: 'holiday' | 'class'
+        type: 'holiday' | 'class' | 'notice'
         session: number | null
         status: string
         deducted: boolean
@@ -124,6 +124,7 @@ export function SessionsPage({ courses, userRole, waitlists, userCategory }: Ses
           const courseCredit = credits?.find((c: any) => c.student_id === s.id && c.course_id === courseId)
             || credit
           const totalSessions = courseCredit?.total_credits || 0
+          const planWeeks = courseCredit?.plan_weeks || 0
           const scheduleEntries: any[] = []
 
           if (targetDay !== undefined && totalSessions > 0) {
@@ -150,33 +151,54 @@ export function SessionsPage({ courses, userRole, waitlists, userCategory }: Ses
             }
 
             let sessionCount = 0
+            let weekCount = 0
+            const maxWeeks = planWeeks > 0 ? planWeeks : totalSessions * 3
             const today = new Date()
             today.setHours(0, 0, 0, 0)
             let safety = 0
 
-            while (sessionCount < totalSessions && safety < totalSessions * 3) {
+            while (sessionCount < totalSessions && weekCount < maxWeeks && safety < maxWeeks * 3) {
               safety++
-              const dateStr = `${current.getFullYear()}-${String(current.getMonth() + 1).padStart(2, '0')}-${String(current.getDate()).padStart(2, '0')}`
+              const dateStr = formatLocalDate(current)
               const isHoliday = holidays?.some((h: any) =>
-                h.holiday_date === dateStr &&
-                (h.course_id === courseId || !h.course_id)
+                h.date === dateStr && h.course_id === courseId
               )
 
               if (isHoliday) {
+                // 連假不算堂數也不算週數
                 scheduleEntries.push({ date: dateStr, type: 'holiday', session: null, status: '連假暫停', deducted: false })
               } else {
-                sessionCount++
+                weekCount++
                 const att = courseAttendance.find((a: any) => a.date === dateStr)
-                let status = '待上課'
-                if (att) {
-                  status = att.status
-                } else if (current < today) {
-                  status = '未記錄'
+                const isLeave = att && ['請假', '病假'].includes(att.status)
+
+                if (isLeave) {
+                  // 請假/病假：計入週數但不計入堂數
+                  scheduleEntries.push({ date: dateStr, type: 'class', session: null, status: att.status, deducted: att?.deducted || false })
+                } else {
+                  sessionCount++
+                  let status = '待上課'
+                  if (att) {
+                    status = att.status
+                  } else if (current < today) {
+                    status = '未記錄'
+                  }
+                  scheduleEntries.push({ date: dateStr, type: 'class', session: sessionCount, status, deducted: att?.deducted || false })
                 }
-                scheduleEntries.push({ date: dateStr, type: 'class', session: sessionCount, status, deducted: att?.deducted || false })
               }
 
               current.setDate(current.getDate() + 7)
+            }
+
+            // 週數用完但堂數未完的提示
+            if (planWeeks > 0 && weekCount >= planWeeks && sessionCount < totalSessions) {
+              scheduleEntries.push({
+                date: '',
+                type: 'notice',
+                session: null,
+                status: `週數已用完，剩餘 ${totalSessions - sessionCount} 堂請轉班上課`,
+                deducted: false,
+              })
             }
           }
 
@@ -373,7 +395,12 @@ export function SessionsPage({ courses, userRole, waitlists, userCategory }: Ses
                       <div>
                         <p className="text-sm text-neutral-500">堂數使用狀況</p>
                         <p className="text-lg font-bold">
-                          已使用 <span className="text-primary">{student.usedCredits}</span> / 共 {student.totalCredits} 堂
+                          已上 <span className="text-primary">{student.usedCredits}</span> / 共 {student.totalCredits} 堂
+                          {student.planWeeks > 0 && (() => {
+                            const usedWeeks = student.courses.reduce((sum, c) =>
+                              sum + c.scheduleEntries.filter(e => e.type === 'class').length, 0)
+                            return <span className="text-sm font-normal text-neutral-500">（剩餘 {Math.max(0, student.planWeeks - usedWeeks)} 週）</span>
+                          })()}
                         </p>
                       </div>
                       <div className="text-right">
@@ -415,11 +442,20 @@ export function SessionsPage({ courses, userRole, waitlists, userCategory }: Ses
                                     '缺席': 'bg-red-50 text-red-600 border border-red-200',
                                     '請假': 'bg-yellow-50 text-yellow-600 border border-yellow-200',
                                     '遲到': 'bg-orange-50 text-orange-600 border border-orange-200',
-                                    '病假': 'bg-yellow-50 text-yellow-600 border border-yellow-200',
+                                    '病假': 'bg-blue-50 text-blue-600 border border-blue-200',
                                     '補課': 'bg-purple-50 text-purple-600 border border-purple-200',
                                     '連假暫停': 'bg-neutral-100 text-neutral-400 italic',
                                     '待上課': 'bg-blue-50 text-blue-500 border border-dashed border-blue-200',
                                     '未記錄': 'bg-neutral-50 text-neutral-400 border border-dashed border-neutral-300',
+                                  }
+
+                                  // 週數用完提示行
+                                  if (entry.type === 'notice') {
+                                    return (
+                                      <div key={idx} className="p-2 rounded-lg bg-orange-50 text-center">
+                                        <span className="text-sm font-medium text-orange-600">{entry.status}</span>
+                                      </div>
+                                    )
                                   }
 
                                   return (
@@ -431,7 +467,7 @@ export function SessionsPage({ courses, userRole, waitlists, userCategory }: Ses
                                     >
                                       <div className="flex items-center gap-3">
                                         <span className="text-xs text-neutral-400 w-14 text-right">
-                                          {entry.type === 'holiday' ? '' : `第${entry.session}堂`}
+                                          {entry.session ? `第${entry.session}堂` : '—'}
                                         </span>
                                         <span className={`text-sm ${entry.type === 'holiday' ? 'text-neutral-400 italic' : 'text-neutral-900'}`}>
                                           {entry.date} {weekday}
