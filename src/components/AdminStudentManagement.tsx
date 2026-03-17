@@ -66,7 +66,7 @@ export const AdminStudentManagement: React.FC<{
 
     setStudents(studentsData.map(s => {
       const studentEnrollments = enrollmentsData?.filter((e: any) => e.student_id === s.id) || []
-      const studentCredits = creditsData?.find((c: any) => c.student_id === s.id)
+      const studentCredits = creditsData?.filter((c: any) => c.student_id === s.id) || []
       const studentPayments = paymentsData?.filter((p: any) => p.student_id === s.id) || []
       const totalPaid = studentPayments.reduce((sum: number, p: any) => sum + (p.amount || 0), 0)
 
@@ -90,9 +90,9 @@ export const AdminStudentManagement: React.FC<{
         courses: studentEnrollments.map((e: any) => (e.courses as any)?.name || '').filter(Boolean),
         coursesDisplay: studentEnrollments.map((e: any) => (e.courses as any)?.name || '').filter(Boolean).join('、') || '未報名',
         // 堂數
-        totalCredits: studentCredits?.total_credits || 0,
-        usedCredits: studentCredits?.used_credits || 0,
-        remainingCredits: studentCredits?.remaining_credits || 0,
+        totalCredits: studentCredits.reduce((sum: number, c: any) => sum + (c.total_credits || 0), 0),
+        usedCredits: studentCredits.reduce((sum: number, c: any) => sum + (c.used_credits || 0), 0),
+        remainingCredits: studentCredits.reduce((sum: number, c: any) => sum + (c.remaining_credits || 0), 0),
         // 繳費狀態
         paymentStatus: totalPaid > 0 ? '已繳費' : '尚未繳費',
         totalPaid,
