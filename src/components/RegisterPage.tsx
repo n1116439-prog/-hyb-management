@@ -550,6 +550,7 @@ export const RegisterPage: React.FC<{ courses: Course[]; initialCourseId?: strin
 
               <FormField label="選擇報名方案">
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {console.log('autoCategory:', autoCategory, 'plans:', plans.map(p => ({name: p.name, category: p.category})))}
                   {plans.filter(p => p.category === 'all' || p.category === autoCategory).map(plan => (
                     <button
                       key={plan.id}
