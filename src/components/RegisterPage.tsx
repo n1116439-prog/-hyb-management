@@ -1,5 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+
+function formatLocalDate(date: Date): string {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
 import { Check, ChevronRight, User, Calendar, Clock, MapPin, ArrowLeft, DollarSign, CreditCard } from 'lucide-react';
 import { Course } from '../types';
 import { supabase } from '../lib/supabase';
@@ -197,7 +204,7 @@ export const RegisterPage: React.FC<{ courses: Course[]; initialCourseId?: strin
     }
 
     // 檢查日期
-    const today = new Date().toISOString().split('T')[0]
+    const today = formatLocalDate(new Date())
     if (promo.start_date && today < promo.start_date) {
       setPromoError('此優惠碼尚未開始')
       return
@@ -286,7 +293,7 @@ export const RegisterPage: React.FC<{ courses: Course[]; initialCourseId?: strin
         if (existingCredit) {
           const { error: creditError } = await supabase.from('credits').update({
             total_credits: existingCredit.total_credits + creditSessions,
-            expiry_date: expiryDate.toISOString().split('T')[0],
+            expiry_date: formatLocalDate(expiryDate),
             plan_weeks: planWeeks,
             max_leave: planMaxLeave,
             status: 'active',
@@ -301,7 +308,7 @@ export const RegisterPage: React.FC<{ courses: Course[]; initialCourseId?: strin
             leave_count: 0,
             max_leave: planMaxLeave,
             plan_weeks: planWeeks,
-            expiry_date: expiryDate.toISOString().split('T')[0],
+            expiry_date: formatLocalDate(expiryDate),
             status: 'active',
           })
           console.log('新增 credits:', creditError || '成功')

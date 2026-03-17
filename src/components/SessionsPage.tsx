@@ -1,4 +1,11 @@
 import React, { useState, useEffect } from 'react';
+
+function formatLocalDate(date: Date): string {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
 import { User, History } from 'lucide-react';
 import { Badge, Button } from './UI';
 import { supabase } from '../lib/supabase';
@@ -400,7 +407,7 @@ export function SessionsPage({ courses, userRole, waitlists, userCategory }: Ses
                                   const weekdays = ['日', '一', '二', '三', '四', '五', '六']
                                   const d = new Date(entry.date + 'T00:00:00')
                                   const weekday = `週${weekdays[d.getDay()]}`
-                                  const todayStr = new Date().toISOString().split('T')[0]
+                                  const todayStr = formatLocalDate(new Date())
                                   const isToday = entry.date === todayStr
 
                                   const statusStyles: Record<string, string> = {

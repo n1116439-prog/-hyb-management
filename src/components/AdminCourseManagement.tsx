@@ -1,4 +1,11 @@
 import React, { useState, useEffect } from 'react';
+
+function formatLocalDate(date: Date): string {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
 import { 
   Plus, 
   Search, 
@@ -220,7 +227,7 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
           while (lastClassDate.getDay() !== targetDay || lastClassDate >= todayDate) {
             lastClassDate.setDate(lastClassDate.getDate() - 1)
           }
-          const lastClassDateStr = lastClassDate.toISOString().split('T')[0]
+          const lastClassDateStr = formatLocalDate(lastClassDate)
 
           const { count } = await supabase
             .from('attendance')
@@ -269,7 +276,7 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
         if (checkDate.getDay() !== targetDay) continue
         if (checkDate > threeDaysAgo) continue
 
-        const dateStr = checkDate.toISOString().split('T')[0]
+        const dateStr = formatLocalDate(checkDate)
 
         const { count } = await supabase
           .from('attendance')
@@ -757,7 +764,7 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
 
     while (date.getMonth() === month - 1) {
       if (date.getDay() === targetDay) {
-        dates.push(date.toISOString().split('T')[0])
+        dates.push(formatLocalDate(date))
       }
       date.setDate(date.getDate() + 1)
     }
@@ -771,7 +778,7 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
   useEffect(() => {
     const dates = getCourseDatesInMonth()
     if (dates.length > 0) {
-      const today = new Date().toISOString().split('T')[0]
+      const today = formatLocalDate(new Date())
       const closest = dates.reduce((prev, curr) =>
         Math.abs(new Date(curr).getTime() - new Date(today).getTime()) <
         Math.abs(new Date(prev).getTime() - new Date(today).getTime()) ? curr : prev
@@ -1357,7 +1364,7 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
                             const dates: string[] = []
                             const d = new Date(year, month - 1, 1)
                             while (d.getMonth() === month - 1) {
-                              if (d.getDay() === targetDay) dates.push(d.toISOString().split('T')[0])
+                              if (d.getDay() === targetDay) dates.push(formatLocalDate(d))
                               d.setDate(d.getDate() + 1)
                             }
 
