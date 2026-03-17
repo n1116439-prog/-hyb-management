@@ -1,8 +1,16 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { 
-  Plus, 
-  FileText, 
-  Clock, 
+
+function formatLocalDate(date: Date): string {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+import {
+  Plus,
+  FileText,
+  Clock,
   Calendar, 
   MapPin, 
   AlertCircle, 
@@ -61,7 +69,7 @@ const generateWeeklySchedule = (startDate: string, endDate: string, slots: Contr
       const daySlots = slots.filter(s => s.day === weekdayStr).map(s => `${s.time} (${s.courts})`);
       
       schedule.push({
-        dateStr: current.toISOString().split('T')[0].replace(/-/g, '/'),
+        dateStr: formatLocalDate(current).replace(/-/g, '/'),
         weekday: weekdayStr,
         timeSlots: daySlots,
         paused: false,

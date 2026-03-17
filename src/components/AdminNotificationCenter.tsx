@@ -1,4 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
+
+function formatLocalDate(date: Date): string {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 import {
 
   Bell,
@@ -69,7 +77,7 @@ export const AdminNotificationCenter: React.FC = () => {
     const { data: expiredCredits } = await supabase
       .from('credits')
       .select('*, students(name, student_number)')
-      .lt('expiry_date', new Date().toISOString().split('T')[0])
+      .lt('expiry_date', formatLocalDate(new Date()))
       .eq('status', 'active')
 
     expiredCredits?.forEach(c => {
@@ -89,8 +97,8 @@ export const AdminNotificationCenter: React.FC = () => {
     const { data: expiringContracts } = await supabase
       .from('venue_contracts')
       .select('*, venues(name)')
-      .lte('end_date', thirtyDaysLater.toISOString().split('T')[0])
-      .gte('end_date', new Date().toISOString().split('T')[0])
+      .lte('end_date', formatLocalDate(thirtyDaysLater))
+      .gte('end_date', formatLocalDate(new Date()))
 
     expiringContracts?.forEach(c => {
       newNotifs.push({

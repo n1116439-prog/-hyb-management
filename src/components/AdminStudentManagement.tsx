@@ -1,8 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  Search, 
-  Filter, 
-  MoreHorizontal, 
+
+function formatLocalDate(date: Date): string {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+import {
+  Search,
+  Filter,
+  MoreHorizontal,
   Edit2, 
   Trash2, 
   Eye, 
@@ -195,7 +203,7 @@ export const AdminStudentManagement: React.FC<{
         leave_count: 0,
         max_leave: 4,
         plan_weeks: 12,
-        expiry_date: expiryDate.toISOString().split('T')[0],
+        expiry_date: formatLocalDate(expiryDate),
         status: 'active',
       })
 

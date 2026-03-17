@@ -1,4 +1,11 @@
 import React, { useState, useEffect } from 'react'
+
+function formatLocalDate(date: Date): string {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
 import { supabase } from '../lib/supabase'
 import { Input, FormField } from './UI'
 import { DollarSign, Check } from 'lucide-react'
@@ -33,7 +40,7 @@ export const AdminCoachPayroll: React.FC = () => {
   const fetchCoachStats = async (coachId: string, month: string) => {
     const [year, m] = month.split('-').map(Number)
     const startDate = `${year}-${String(m).padStart(2, '0')}-01`
-    const endDate = new Date(year, m, 0).toISOString().split('T')[0]
+    const endDate = formatLocalDate(new Date(year, m, 0))
 
     const { data: courses } = await supabase
       .from('courses')
@@ -116,7 +123,7 @@ export const AdminCoachPayroll: React.FC = () => {
 
     const [year, m] = selectedMonth.split('-').map(Number)
     const periodStart = `${year}-${String(m).padStart(2, '0')}-01`
-    const periodEnd = new Date(year, m, 0).toISOString().split('T')[0]
+    const periodEnd = formatLocalDate(new Date(year, m, 0))
 
     const { data: existing } = await supabase
       .from('coach_payments')
@@ -153,7 +160,7 @@ export const AdminCoachPayroll: React.FC = () => {
   const markAsPaid = async (payrollId: string) => {
     await supabase.from('coach_payments').update({
       status: 'paid',
-      paid_date: new Date().toISOString().split('T')[0],
+      paid_date: formatLocalDate(new Date()),
     }).eq('id', payrollId)
     if (selectedCoach) fetchPayrollRecords(selectedCoach.id)
   }
