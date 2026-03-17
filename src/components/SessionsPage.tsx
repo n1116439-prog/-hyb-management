@@ -88,7 +88,7 @@ export function SessionsPage({ courses, userRole, waitlists, userCategory }: Ses
     setCourseHolidays(holidays || [])
 
     setStudentCredits(studentList.map((s: any) => {
-      const credit = credits?.find((c: any) => c.student_id === s.id)
+      const studentCreds = credits?.filter((c: any) => c.student_id === s.id) || []
       const studentEnrollments = enrollments?.filter((e: any) => e.student_id === s.id) || []
       const studentAttendance = allAttendance?.filter((a: any) => a.student_id === s.id) || []
 
@@ -97,13 +97,13 @@ export function SessionsPage({ courses, userRole, waitlists, userCategory }: Ses
         name: s.name,
         studentNumber: s.student_code || s.student_number || '',
         category: s.category || 'child',
-        totalCredits: credit?.total_credits || 0,
-        usedCredits: credit?.used_credits || 0,
-        remainingCredits: credit?.remaining_credits || 0,
-        leaveCount: credit?.leave_count || 0,
-        maxLeave: credit?.max_leave || 0,
-        expiryDate: credit?.expiry_date || '',
-        planWeeks: credit?.plan_weeks || 0,
+        totalCredits: studentCreds.reduce((sum: number, c: any) => sum + (c.total_credits || 0), 0),
+        usedCredits: studentCreds.reduce((sum: number, c: any) => sum + (c.used_credits || 0), 0),
+        remainingCredits: studentCreds.reduce((sum: number, c: any) => sum + (c.remaining_credits || 0), 0),
+        leaveCount: studentCreds.reduce((sum: number, c: any) => sum + (c.leave_count || 0), 0),
+        maxLeave: studentCreds.reduce((sum: number, c: any) => sum + (c.max_leave || 0), 0),
+        expiryDate: studentCreds.length > 0 ? studentCreds.sort((a: any, b: any) => (b.expiry_date || '').localeCompare(a.expiry_date || ''))[0]?.expiry_date || '' : '',
+        planWeeks: studentCreds.reduce((sum: number, c: any) => sum + (c.plan_weeks || 0), 0),
         courses: studentEnrollments.map((e: any) => {
           const weekdayMap: Record<string, number> = {
             '週日': 0, '週一': 1, '週二': 2, '週三': 3,
@@ -122,7 +122,7 @@ export function SessionsPage({ courses, userRole, waitlists, userCategory }: Ses
           // 生成日程表
           const courseId = e.course_id
           const courseCredit = credits?.find((c: any) => c.student_id === s.id && c.course_id === courseId)
-            || credit
+            || studentCreds.find((c: any) => !c.course_id) || studentCreds[0]
           const totalSessions = courseCredit?.total_credits || 0
           const planWeeks = courseCredit?.plan_weeks || 0
           const scheduleEntries: any[] = []
