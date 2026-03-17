@@ -127,17 +127,15 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
 
   const fetchCourseHolidays = async (courseId: string) => {
     const { data } = await supabase
-      .from('messages')
+      .from('course_holidays')
       .select('*')
       .eq('course_id', courseId)
-      .eq('type', 'course_update')
-      .order('created_at', { ascending: false })
 
     if (data) {
-      setCourseHolidays(data.map(m => ({
-        id: m.id,
-        date: m.title,
-        reason: m.content,
+      setCourseHolidays(data.map(h => ({
+        id: h.id,
+        date: h.date,
+        reason: h.reason,
       })))
     }
   }
@@ -145,13 +143,10 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
   const addHoliday = async () => {
     if (!selectedCourse || !newHolidayDate) return
 
-    await supabase.from('messages').insert({
-      type: 'course_update',
-      title: newHolidayDate,
-      content: newHolidayReason || '停課',
+    await supabase.from('course_holidays').insert({
       course_id: selectedCourse.id,
-      recipient_type: 'course',
-      recipient_id: selectedCourse.id,
+      date: newHolidayDate,
+      reason: newHolidayReason || '停課',
     })
 
     setNewHolidayDate('')
@@ -160,7 +155,7 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
   }
 
   const removeHoliday = async (messageId: string) => {
-    await supabase.from('messages').delete().eq('id', messageId)
+    await supabase.from('course_holidays').delete().eq('id', messageId)
     if (selectedCourse) fetchCourseHolidays(selectedCourse.id)
   }
 
