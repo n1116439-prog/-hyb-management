@@ -627,8 +627,8 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
       .in('student_id', studentIds)
       .eq('status', 'active')
 
-    // 3. 過濾：只保留有堂數且堂數 > 0 的學員
-    const validStudents = enrollments
+    // 3. 所有已報名學員都顯示，不論堂數狀態
+    const enrolledStudents = enrollments
       .map((e: any) => {
         const studentId = e.students?.id
         if (!studentId) return null
@@ -639,19 +639,15 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
         const generalCredit = allCredits?.find((c: any) => c.student_id === studentId && !c.course_id)
         const credit = courseCredit || generalCredit
 
-        // 沒有堂數或堂數用完 → 不顯示
-        if (!credit || credit.remaining_credits <= 0) return null
-
-        // 檢查是否過期
-        if (credit.expiry_date && new Date(credit.expiry_date) < new Date()) return null
+        const isExpired = credit?.expiry_date && new Date(credit.expiry_date) < new Date()
 
         // 判斷課程類型
         let courseType: 'official' | 'trial' | 'makeup' = 'official'
-        if (credit.total_credits === 1) {
+        if (credit?.total_credits === 1) {
           courseType = 'trial'
         }
         // 如果這個 credit 的 course_id 不是當前課程，表示是從其他班來補課
-        if (credit.course_id && credit.course_id !== courseId) {
+        if (credit?.course_id && credit.course_id !== courseId) {
           courseType = 'makeup'
         }
 
@@ -661,22 +657,21 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
           studentNumber: e.students?.student_code || e.students?.student_number || '',
           category: e.students?.category,
           courseType,
-          remainingCredits: credit.remaining_credits,
-          totalCredits: credit.total_credits,
-          leaveCount: credit.leave_count || 0,
-          maxLeave: credit.max_leave || 0,
-          expiryDate: credit.expiry_date,
-          creditId: credit.id,
+          remainingCredits: credit?.remaining_credits ?? 0,
+          totalCredits: credit?.total_credits ?? 0,
+          leaveCount: credit?.leave_count || 0,
+          maxLeave: credit?.max_leave || 0,
+          expiryDate: credit?.expiry_date,
+          creditId: credit?.id,
+          isExpired: !!isExpired,
         }
       })
       .filter(Boolean)
 
-    setCourseStudents(validStudents)
-
     // 4. 讀取該日期已有的點名紀錄
     const { data: existing } = await supabase
       .from('attendance')
-      .select('*')
+      .select('*, students(id, name, student_number, student_code, category)')
       .eq('course_id', courseId)
       .eq('date', date)
 
@@ -687,9 +682,31 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
         records[a.student_id] = a.status
       })
       setAttendanceRecords(records)
+
+      // 把有點名紀錄但不在 enrollments 裡的學員（補課學員）加進來
+      const enrolledIds = new Set(enrolledStudents.map((s: any) => s.id))
+      const extraStudents = existing
+        .filter((a: any) => !enrolledIds.has(a.student_id) && a.students)
+        .map((a: any) => ({
+          id: a.student_id,
+          name: a.students?.name,
+          studentNumber: a.students?.student_code || a.students?.student_number || '',
+          category: a.students?.category,
+          courseType: 'makeup' as const,
+          remainingCredits: 0,
+          totalCredits: 0,
+          leaveCount: 0,
+          maxLeave: 0,
+          expiryDate: null,
+          creditId: null,
+          isExpired: false,
+        }))
+
+      setCourseStudents([...enrolledStudents, ...extraStudents])
     } else {
       setAttendanceRecords({})
       setExistingAttendance([])
+      setCourseStudents(enrolledStudents)
     }
 
     // 5. 讀取所有課程（補課選擇用）
