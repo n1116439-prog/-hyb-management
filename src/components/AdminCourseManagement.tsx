@@ -313,6 +313,9 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
           deducted: true,
         }))
 
+        // 先刪除該日期該課程的既有紀錄，避免重複寫入
+        await supabase.from('attendance').delete().eq('course_id', course.id).eq('date', dateStr)
+
         await supabase.from('attendance').insert(attendanceInserts)
 
         for (const e of courseEnrollments) {
@@ -877,6 +880,9 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
         if (isMakeup && makeupCourseMap[student.id]) {
           insertData.makeup_from_course_id = makeupCourseMap[student.id]
         }
+
+        // 先刪除同一筆紀錄，避免重複寫入
+        await supabase.from('attendance').delete().eq('student_id', student.id).eq('course_id', selectedCourse.id).eq('date', selectedAttendanceDate)
 
         await supabase.from('attendance').insert(insertData)
 
