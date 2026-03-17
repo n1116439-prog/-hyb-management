@@ -31,6 +31,14 @@ export function SessionsPage({ courses, userRole, waitlists, userCategory }: Ses
       time: string
       location: string
       nextClassDate: string
+      courseId: string
+      scheduleEntries: {
+        date: string
+        type: 'holiday' | 'class'
+        session: number | null
+        status: string
+        deducted: boolean
+      }[]
     }[]
     attendance: {
       date: string
@@ -42,6 +50,7 @@ export function SessionsPage({ courses, userRole, waitlists, userCategory }: Ses
       location: string
     }[]
   }[]>([])
+  const [courseHolidays, setCourseHolidays] = useState<any[]>([])
   const [expandedStudentId, setExpandedStudentId] = useState<string | null>(null)
   const [activeStudentTab, setActiveStudentTab] = useState<Record<string, 'courses' | 'records'>>({})
 
@@ -67,6 +76,9 @@ export function SessionsPage({ courses, userRole, waitlists, userCategory }: Ses
       .order('date', { ascending: false })
 
     console.log('attendance 查詢結果:', allAttendance)
+
+    const { data: holidays } = await supabase.from('course_holidays').select('*')
+    setCourseHolidays(holidays || [])
 
     setStudentCredits(studentList.map((s: any) => {
       const credit = credits?.find((c: any) => c.student_id === s.id)
@@ -99,8 +111,56 @@ export function SessionsPage({ courses, userRole, waitlists, userCategory }: Ses
             }
             nextClassDate = `${next.getMonth()+1}/${next.getDate()}`
           }
+
+          // 生成日程表
+          const courseId = e.course_id
+          const courseCredit = credits?.find((c: any) => c.student_id === s.id && c.course_id === courseId)
+            || credit
+          const totalSessions = courseCredit?.total_credits || 0
+          const scheduleEntries: any[] = []
+
+          if (targetDay !== undefined && totalSessions > 0) {
+            const enrolledAt = e.enrolled_at ? new Date(e.enrolled_at) : new Date()
+            enrolledAt.setHours(0, 0, 0, 0)
+            const current = new Date(enrolledAt)
+            while (current.getDay() !== targetDay) {
+              current.setDate(current.getDate() + 1)
+            }
+
+            let sessionCount = 0
+            const today = new Date()
+            today.setHours(0, 0, 0, 0)
+            let safety = 0
+
+            while (sessionCount < totalSessions && safety < totalSessions * 3) {
+              safety++
+              const dateStr = `${current.getFullYear()}-${String(current.getMonth() + 1).padStart(2, '0')}-${String(current.getDate()).padStart(2, '0')}`
+              const isHoliday = holidays?.some((h: any) =>
+                h.holiday_date === dateStr &&
+                (h.course_id === courseId || !h.course_id)
+              )
+
+              if (isHoliday) {
+                scheduleEntries.push({ date: dateStr, type: 'holiday', session: null, status: '連假暫停', deducted: false })
+              } else {
+                sessionCount++
+                const att = studentAttendance.find((a: any) => a.date === dateStr && a.course_id === courseId)
+                let status = '待上課'
+                if (att) {
+                  status = att.status
+                } else if (current < today) {
+                  status = '未記錄'
+                }
+                scheduleEntries.push({ date: dateStr, type: 'class', session: sessionCount, status, deducted: att?.deducted || false })
+              }
+
+              current.setDate(current.getDate() + 7)
+            }
+          }
+
           return {
             id: e.id,
+            courseId,
             courseName: e.courses?.name || '未知',
             schedule: e.courses?.day_of_week || '',
             time: e.courses?.start_time && e.courses?.end_time
@@ -108,6 +168,7 @@ export function SessionsPage({ courses, userRole, waitlists, userCategory }: Ses
               : '',
             location: e.courses?.venues?.name || '',
             nextClassDate,
+            scheduleEntries,
           }
         }),
         attendance: studentAttendance.map((a: any) => ({
@@ -256,7 +317,7 @@ export function SessionsPage({ courses, userRole, waitlists, userCategory }: Ses
                         : 'text-neutral-500'
                     }`}
                   >
-                    堂數紀錄
+                    課程日程
                   </button>
                 </div>
 
@@ -282,7 +343,7 @@ export function SessionsPage({ courses, userRole, waitlists, userCategory }: Ses
                   </div>
                 )}
 
-                {/* 堂數紀錄 tab */}
+                {/* 課程日程 tab */}
                 {activeStudentTab[student.id] === 'records' && (
                   <div className="p-4 space-y-3">
                     {/* 堂數摘要 */}
@@ -312,44 +373,66 @@ export function SessionsPage({ courses, userRole, waitlists, userCategory }: Ses
                       </div>
                     )}
 
-                    {/* 使用紀錄列表 */}
-                    {student.attendance.length > 0 ? (
-                      <div className="space-y-2">
-                        <p className="text-sm font-medium text-neutral-700">使用紀錄</p>
-                        {student.attendance.map((record, idx) => {
-                          const colorMap: Record<string, { bg: string, text: string, border: string }> = {
-                            '出席': { bg: 'bg-green-50', text: 'text-green-600', border: 'border-green-200' },
-                            '缺席': { bg: 'bg-red-50', text: 'text-red-600', border: 'border-red-200' },
-                            '請假': { bg: 'bg-yellow-50', text: 'text-yellow-600', border: 'border-yellow-200' },
-                            '遲到': { bg: 'bg-orange-50', text: 'text-orange-600', border: 'border-orange-200' },
-                            '病假': { bg: 'bg-blue-50', text: 'text-blue-600', border: 'border-blue-200' },
-                            '補課': { bg: 'bg-purple-50', text: 'text-purple-600', border: 'border-purple-200' },
-                          }
-                          const color = colorMap[record.status] || { bg: 'bg-neutral-50', text: 'text-neutral-600', border: 'border-neutral-200' }
+                    {/* 課程日程表 */}
+                    {student.courses.length > 0 ? (
+                      <div className="space-y-4">
+                        {student.courses.map(course => (
+                          <div key={course.id} className="space-y-2">
+                            <p className="text-sm font-medium text-neutral-700">{course.courseName} · {course.schedule} {course.time}</p>
+                            {course.scheduleEntries.length > 0 ? (
+                              <div className="space-y-1">
+                                {course.scheduleEntries.map((entry, idx) => {
+                                  const weekdays = ['日', '一', '二', '三', '四', '五', '六']
+                                  const d = new Date(entry.date + 'T00:00:00')
+                                  const weekday = `週${weekdays[d.getDay()]}`
+                                  const todayStr = new Date().toISOString().split('T')[0]
+                                  const isToday = entry.date === todayStr
 
-                          return (
-                            <div key={idx} className={`${color.bg} border ${color.border} rounded-lg p-3 flex items-center justify-between`}>
-                              <div>
-                                <p className="text-sm font-medium text-neutral-900">{record.date}</p>
-                                <p className="text-xs text-neutral-500">
-                                  {record.courseName} · {record.schedule} {record.time}
-                                  {record.location && ` · ${record.location}`}
-                                </p>
+                                  const statusStyles: Record<string, string> = {
+                                    '出席': 'bg-green-50 text-green-600 border border-green-200',
+                                    '缺席': 'bg-red-50 text-red-600 border border-red-200',
+                                    '請假': 'bg-yellow-50 text-yellow-600 border border-yellow-200',
+                                    '遲到': 'bg-orange-50 text-orange-600 border border-orange-200',
+                                    '病假': 'bg-yellow-50 text-yellow-600 border border-yellow-200',
+                                    '補課': 'bg-purple-50 text-purple-600 border border-purple-200',
+                                    '連假暫停': 'bg-neutral-100 text-neutral-400 italic',
+                                    '待上課': 'bg-blue-50 text-blue-500 border border-dashed border-blue-200',
+                                    '未記錄': 'bg-neutral-50 text-neutral-400 border border-dashed border-neutral-300',
+                                  }
+
+                                  return (
+                                    <div
+                                      key={idx}
+                                      className={`flex items-center justify-between p-2 rounded-lg ${
+                                        isToday ? 'border-l-4 border-l-blue-500 bg-blue-50/30' : ''
+                                      } ${entry.type === 'holiday' ? 'bg-neutral-50' : ''}`}
+                                    >
+                                      <div className="flex items-center gap-3">
+                                        <span className="text-xs text-neutral-400 w-14 text-right">
+                                          {entry.type === 'holiday' ? '' : `第${entry.session}堂`}
+                                        </span>
+                                        <span className={`text-sm ${entry.type === 'holiday' ? 'text-neutral-400 italic' : 'text-neutral-900'}`}>
+                                          {entry.date} {weekday}
+                                        </span>
+                                      </div>
+                                      <div className="flex items-center gap-2">
+                                        {entry.deducted && <span className="text-xs text-neutral-400">-1堂</span>}
+                                        <span className={`text-xs px-2 py-1 rounded-full font-medium ${statusStyles[entry.status] || 'bg-neutral-50 text-neutral-500'}`}>
+                                          {entry.status}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  )
+                                })}
                               </div>
-                              <div className="flex items-center gap-2">
-                                {record.deducted && <span className="text-xs text-neutral-400">-1堂</span>}
-                                <span className={`text-xs px-2 py-1 rounded-full font-medium ${color.text} ${color.bg}`}>
-                                  {record.status}
-                                </span>
-                              </div>
-                            </div>
-                          )
-                        })}
+                            ) : (
+                              <p className="text-sm text-neutral-400 py-2">尚無日程資料</p>
+                            )}
+                          </div>
+                        ))}
                       </div>
                     ) : (
-                      <div className="text-center py-6 text-neutral-400 text-sm">
-                        尚無使用紀錄
-                      </div>
+                      <div className="text-center py-6 text-neutral-400 text-sm">尚未報名任何課程</div>
                     )}
                   </div>
                 )}
