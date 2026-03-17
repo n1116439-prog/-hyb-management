@@ -454,8 +454,11 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
       return
     }
 
-    // 匯入學員
+    // 匯入學員（先刪除舊記錄再 insert，避免重複衝突）
     if (courseData && addedStudents.length > 0) {
+      for (const s of addedStudents) {
+        await supabase.from('enrollments').delete().eq('student_id', s.id).eq('course_id', courseData.id)
+      }
       await supabase.from('enrollments').insert(
         addedStudents.map(s => ({
           student_id: s.id,
@@ -553,7 +556,8 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
 
   const handleAddStudentById = async (studentId: string, studentName: string) => {
     if (!selectedCourse || !studentId) return;
-    // 寫入 enrollments
+    // 先刪除舊記錄再 insert，避免重複衝突
+    await supabase.from('enrollments').delete().eq('student_id', studentId).eq('course_id', selectedCourse.id)
     const { data, error } = await supabase.from('enrollments').insert({
       student_id: studentId,
       course_id: selectedCourse.id,
