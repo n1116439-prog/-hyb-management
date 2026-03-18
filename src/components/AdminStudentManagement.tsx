@@ -123,6 +123,7 @@ export const AdminStudentManagement: React.FC<{
   const [creditAction, setCreditAction] = useState<'add' | 'subtract'>('add')
   const [creditAmount, setCreditAmount] = useState(1)
   const [creditReason, setCreditReason] = useState('')
+  const [creditCourseId, setCreditCourseId] = useState<string>('')
   const [allCourses, setAllCourses] = useState<any[]>([])
   const [studentEnrollments, setStudentEnrollments] = useState<any[]>([])
   const [studentCreditsDetail, setStudentCreditsDetail] = useState<any[]>([])
@@ -418,17 +419,27 @@ export const AdminStudentManagement: React.FC<{
   const handleCreditChange = async () => {
     if (!operatingStudent || creditAmount <= 0) return
 
-    // 從資料庫即時讀取最新 credits
+    // 確定要操作的課程
+    const enrolledCourses = studentEnrollments.filter((e: any) => e.status === '已報名')
+    const targetCourseId = creditCourseId || (enrolledCourses.length === 1 ? enrolledCourses[0].course_id : '')
+
+    if (!targetCourseId) {
+      alert('請選擇要加減堂的課程')
+      return
+    }
+
+    // 從資料庫即時讀取最新 credits（匹配 course_id）
     const { data: credits } = await supabase
       .from('credits')
       .select('*')
       .eq('student_id', operatingStudent.id)
+      .eq('course_id', targetCourseId)
       .eq('status', 'active')
 
     const credit = credits?.[0]
 
     if (!credit && creditAction === 'subtract') {
-      alert('該學員沒有可用堂數')
+      alert('該學員在此課程沒有可用堂數')
       return
     }
 
@@ -452,6 +463,7 @@ export const AdminStudentManagement: React.FC<{
 
       const { error } = await supabase.from('credits').insert({
         student_id: operatingStudent.id,
+        course_id: targetCourseId,
         total_credits: creditAmount,
         used_credits: 0,
         leave_count: 0,
@@ -495,6 +507,7 @@ export const AdminStudentManagement: React.FC<{
     setShowCreditModal(false)
     setCreditAmount(1)
     setCreditReason('')
+    setCreditCourseId('')
     setOperatingStudent(null)
 
     // 重新載入學員資料
@@ -1460,6 +1473,34 @@ export const AdminStudentManagement: React.FC<{
                 className={`flex-1 py-2 rounded-lg font-medium ${creditAction === 'subtract' ? 'bg-red-500 text-white' : 'bg-red-50 text-red-700 border border-red-200'}`}
               >- 減堂</button>
             </div>
+
+            {(() => {
+              const enrolledCourses = studentEnrollments.filter((e: any) => e.status === '已報名');
+              if (enrolledCourses.length > 1) {
+                return (
+                  <FormField label="選擇課程">
+                    <Select value={creditCourseId} onChange={e => setCreditCourseId(e.target.value)}>
+                      <option value="">請選擇課程</option>
+                      {enrolledCourses.map((e: any) => (
+                        <option key={e.course_id} value={e.course_id}>{e.courses?.name || e.course_id}</option>
+                      ))}
+                    </Select>
+                  </FormField>
+                );
+              } else if (enrolledCourses.length === 1) {
+                return (
+                  <div className="bg-blue-50 rounded-xl p-3 text-sm text-blue-700">
+                    課程：{enrolledCourses[0].courses?.name || '未知'}
+                  </div>
+                );
+              } else {
+                return (
+                  <div className="bg-red-50 rounded-xl p-3 text-sm text-red-600">
+                    此學員尚未報名任何課程，無法加減堂
+                  </div>
+                );
+              }
+            })()}
 
             <FormField label="堂數">
               <Input type="number" min={1} value={creditAmount} onChange={e => setCreditAmount(parseInt(e.target.value) || 1)} />
