@@ -49,10 +49,10 @@ export const AdminAttendance: React.FC = () => {
             </div>
             <div>
               <p className="text-sm font-medium text-neutral-500">本月平均出席率</p>
-              <h3 className="text-2xl font-bold text-neutral-900">94%</h3>
+              <h3 className="text-2xl font-bold text-neutral-900">-</h3>
             </div>
           </div>
-          <Badge variant="accent" className="text-xs">+2.0% 較上月</Badge>
+          <Badge variant="accent" className="text-xs">—</Badge>
         </div>
         <div className="bg-white p-6 rounded-3xl shadow-sm border border-neutral-100">
           <div className="flex items-center gap-3 mb-4">
@@ -61,10 +61,10 @@ export const AdminAttendance: React.FC = () => {
             </div>
             <div>
               <p className="text-sm font-medium text-neutral-500">最高出席班級</p>
-              <h3 className="text-lg font-bold text-neutral-900 truncate">林口 [頭湖國小] 週六</h3>
+              <h3 className="text-lg font-bold text-neutral-900 truncate">-</h3>
             </div>
           </div>
-          <Badge variant="accent" className="text-xs">98% 出席率</Badge>
+          <Badge variant="accent" className="text-xs">-</Badge>
         </div>
         <div className="bg-white p-6 rounded-3xl shadow-sm border border-neutral-100">
           <div className="flex items-center gap-3 mb-4">
@@ -73,10 +73,10 @@ export const AdminAttendance: React.FC = () => {
             </div>
             <div>
               <p className="text-sm font-medium text-neutral-500">需關注班級</p>
-              <h3 className="text-lg font-bold text-neutral-900 truncate">永和 [永平國小] 週三</h3>
+              <h3 className="text-lg font-bold text-neutral-900 truncate">-</h3>
             </div>
           </div>
-          <Badge variant="danger" className="text-xs">75% 出席率</Badge>
+          <Badge variant="danger" className="text-xs">-</Badge>
         </div>
       </div>
 

@@ -14,20 +14,9 @@ import {
   ResponsiveContainer, BarChart, Bar, Cell 
 } from 'recharts';
 
-const ENROLLMENT_DATA = [
-  { name: '10月', students: 120, revenue: 180000 },
-  { name: '11月', students: 150, revenue: 225000 },
-  { name: '12月', students: 180, revenue: 270000 },
-  { name: '1月', students: 210, revenue: 315000 },
-  { name: '2月', students: 238, revenue: 357000 },
-  { name: '3月', students: 280, revenue: 420000 },
-];
+const ENROLLMENT_DATA: { name: string; students: number; revenue: number }[] = [];
 
-const TODAY_SCHEDULE = [
-  { time: '10:00', name: '板橋 [江翠國小] 羽球班', coaches: ['張教練', '王教練'], room: '體育館', status: '進行中' },
-  { time: '14:00', name: '林口 [頭湖國小] 羽球班', coaches: ['王教練', '陳教練'], room: '體育館', status: '待開始' },
-  { time: '19:00', name: '永和 [永平國小] 羽球班', coaches: ['陳教練', '李教練'], room: '體育館', status: '待開始' },
-];
+const TODAY_SCHEDULE: { time: string; name: string; coaches: string[]; room: string; status: string }[] = [];
 
 export const CourseOverviewPage: React.FC<{
   courses: Course[];
@@ -83,10 +72,10 @@ export const CourseOverviewPage: React.FC<{
   };
 
   const stats = [
-    { label: '總學員數', value: '238', icon: Users, color: 'text-primary', bg: 'bg-primary/10', trend: '+12%' },
-    { label: '今日課程', value: '3', icon: BookOpen, color: 'text-secondary', bg: 'bg-secondary/10', trend: '穩定' },
-    { label: '本月營收', value: 'NT$ 420K', icon: DollarSign, color: 'text-accent', bg: 'bg-accent/10', trend: '+8.5%' },
-    { label: '平均出席率', value: '94%', icon: Activity, color: 'text-warning', bg: 'bg-warning/10', trend: '+2%' },
+    { label: '總學員數', value: '-', icon: Users, color: 'text-primary', bg: 'bg-primary/10', trend: '' },
+    { label: '今日課程', value: '-', icon: BookOpen, color: 'text-secondary', bg: 'bg-secondary/10', trend: '' },
+    { label: '本月營收', value: '-', icon: DollarSign, color: 'text-accent', bg: 'bg-accent/10', trend: '' },
+    { label: '平均出席率', value: '-', icon: Activity, color: 'text-warning', bg: 'bg-warning/10', trend: '' },
   ];
 
   return (
