@@ -1533,30 +1533,42 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
   const handleImportToEditCourse = async (student: any) => {
     if (!selectedCourse) return;
 
-    // Check if already enrolled
+    // 查詢所有狀態的 enrollment（不只已報名）
     const { data: existing } = await supabase
       .from('enrollments')
-      .select('id')
+      .select('id, status')
       .eq('student_id', student.id)
-      .eq('course_id', selectedCourse.id)
-      .eq('status', '已報名');
+      .eq('course_id', selectedCourse.id);
 
-    if (existing && existing.length > 0) {
+    const enrolled = existing?.find(e => e.status === '已報名');
+    const withdrawn = existing?.find(e => e.status === '已退出');
+
+    if (enrolled) {
       alert('該學員已報名此課程');
       return;
     }
 
-    await supabase.from('enrollments').insert({
-      student_id: student.id,
-      course_id: selectedCourse.id,
-      status: '已報名',
-    });
+    if (withdrawn) {
+      // 重新報名：更新已退出的紀錄
+      await supabase.from('enrollments').update({
+        status: '已報名',
+        withdrawn_at: null,
+      }).eq('id', withdrawn.id);
+    } else {
+      // 完全沒有紀錄：新增
+      await supabase.from('enrollments').insert({
+        student_id: student.id,
+        course_id: selectedCourse.id,
+        status: '已報名',
+      });
+    }
 
     await generateAttendanceRecords(student.id, selectedCourse.id);
 
     await addCourseChangeLog(selectedCourse.id, 'student_enrolled', {
       student_name: student.name,
       student_id: student.id,
+      re_enrolled: !!withdrawn,
     });
 
     alert(`${student.name} 已報名成功`);
