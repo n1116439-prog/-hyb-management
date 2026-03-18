@@ -10,6 +10,7 @@ function formatLocalDate(date: Date): string {
 import { Check, ChevronRight, User, Calendar, Clock, MapPin, ArrowLeft, DollarSign, CreditCard } from 'lucide-react';
 import { Course } from '../types';
 import { supabase } from '../lib/supabase';
+import { generateAttendanceRecords } from '../lib/attendanceUtils';
 import { Button, FormField, Badge } from './UI';
 
 export const RegisterPage: React.FC<{ courses: Course[]; initialCourseId?: string; onComplete: () => void; onRefreshCourses?: () => void; userRole: 'user' | 'admin' | 'student'; userCategory?: 'child' | 'adult' | '' }> = ({ courses, initialCourseId, onComplete, onRefreshCourses, userRole, userCategory }) => {
@@ -312,6 +313,11 @@ export const RegisterPage: React.FC<{ courses: Course[]; initialCourseId?: strin
           })
 
         }
+      }
+
+      // 為每位學員自動建立待上課的 attendance 記錄
+      for (const studentId of selectedStudentIds) {
+        await generateAttendanceRecords(studentId, formData.courseId)
       }
 
       // 寫入付款紀錄

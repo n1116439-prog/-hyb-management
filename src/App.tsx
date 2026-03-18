@@ -203,20 +203,24 @@ export default function App() {
     // 管理員登入判斷：暫時用帳號 a11 判斷
     if (loginMode === 'admin') {
       if (loginData.account === 'a11' && loginData.password === 'a11') {
-        // 寫入 user_roles（如果不存在）
-        const { data: existingRole } = await supabase
-          .from('user_roles')
-          .select('id')
-          .eq('role', 'super_admin')
-          .single();
+        // 寫入 user_roles（如果不存在）— 表可能尚未建立，忽略錯誤
+        try {
+          const { data: existingRole } = await supabase
+            .from('user_roles')
+            .select('id')
+            .eq('role', 'super_admin')
+            .single();
 
-        if (!existingRole) {
-          await supabase.from('user_roles').insert({
-            user_id: '00000000-0000-0000-0000-000000000000',
-            role: 'super_admin',
-            name: 'Admin',
-            email: 'admin',
-          });
+          if (!existingRole) {
+            await supabase.from('user_roles').insert({
+              user_id: '00000000-0000-0000-0000-000000000000',
+              role: 'super_admin',
+              name: 'Admin',
+              email: 'admin',
+            });
+          }
+        } catch (e) {
+          console.warn('user_roles 表查詢失敗，跳過:', e)
         }
 
         setUserRole('admin');
@@ -481,14 +485,18 @@ export default function App() {
       }
     }
 
-    // 3. 寫入 user_roles
-    await supabase.from('user_roles').insert({
-      user_id: authUid,
-      role: 'parent',
-      name: registerData.registerType === 'parent' ? registerData.parentName : registerData.adultName,
-      email: registerData.email,
-      phone: registerData.phone,
-    });
+    // 3. 寫入 user_roles — 表可能尚未建立，忽略錯誤
+    try {
+      await supabase.from('user_roles').insert({
+        user_id: authUid,
+        role: 'parent',
+        name: registerData.registerType === 'parent' ? registerData.parentName : registerData.adultName,
+        email: registerData.email,
+        phone: registerData.phone,
+      });
+    } catch (e) {
+      console.warn('user_roles 表寫入失敗，跳過:', e)
+    }
 
     // 4. 顯示結果
     console.log('註冊回傳的學員資料:', results);

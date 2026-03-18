@@ -119,87 +119,52 @@ export function SessionsPage({ courses, userRole, waitlists, userCategory }: Ses
             nextClassDate = `${next.getMonth()+1}/${next.getDate()}`
           }
 
-          // 生成日程表
+          // 從 attendance 表讀取課程日程（不再動態計算）
           const courseId = e.course_id
-          const courseCredit = credits?.find((c: any) => c.student_id === s.id && c.course_id === courseId)
-            || studentCreds.find((c: any) => !c.course_id) || studentCreds[0]
-          const totalSessions = courseCredit?.total_credits || 0
-          const planWeeks = courseCredit?.plan_weeks || 0
-          const scheduleEntries: any[] = []
+          const courseAttendance = studentAttendance
+            .filter((a: any) => a.course_id === courseId)
+            .sort((a: any, b: any) => (a.date || '').localeCompare(b.date || ''))
 
-          if (targetDay !== undefined && totalSessions > 0) {
-            // 收集該學員在該課程的所有 attendance 日期（去重）
-            const courseAttendance = studentAttendance.filter((a: any) => a.course_id === courseId)
-            const attendanceDates = [...new Set(courseAttendance.map((a: any) => a.date))] as string[]
+          // 去重（同日期只取一筆）
+          const seen = new Set<string>()
+          const uniqueAttendance = courseAttendance.filter((a: any) => {
+            if (seen.has(a.date)) return false
+            seen.add(a.date)
+            return true
+          })
 
-            // 找出最早的 attendance 日期
-            const enrolledAt = e.enrolled_at ? new Date(e.enrolled_at) : new Date()
-            enrolledAt.setHours(0, 0, 0, 0)
-            let startDate = new Date(enrolledAt)
-
-            if (attendanceDates.length > 0) {
-              const earliestAttendance = new Date(attendanceDates.sort()[0] + 'T00:00:00')
-              if (earliestAttendance < startDate) {
-                startDate = earliestAttendance
-              }
+          let sessionCount = 0
+          const scheduleEntries: { date: string; type: 'holiday' | 'class' | 'notice'; session: number | null; status: string; deducted: boolean }[] = uniqueAttendance.map((att: any) => {
+            const isLeave = ['請假', '病假'].includes(att.status)
+            if (!isLeave) sessionCount++
+            return {
+              date: att.date as string,
+              type: 'class' as const,
+              session: isLeave ? null : sessionCount,
+              status: att.status as string,
+              deducted: (att.deducted || false) as boolean,
             }
+          })
 
-            // 從起始日找到第一個對應星期的日期
-            const current = new Date(startDate)
-            while (current.getDay() !== targetDay) {
-              current.setDate(current.getDate() + 1)
-            }
+          // 穿插停課日（在最早和最晚 attendance 日期之間的 holidays）
+          if (uniqueAttendance.length > 0) {
+            const courseHolidayDates = (holidays || [])
+              .filter((h: any) => h.course_id === courseId)
+              .map((h: any) => h.date)
+              .filter((d: string) => d >= uniqueAttendance[0].date && d <= uniqueAttendance[uniqueAttendance.length - 1].date)
+              .filter((d: string) => !seen.has(d))
 
-            let sessionCount = 0
-            let weekCount = 0
-            const maxWeeks = planWeeks > 0 ? planWeeks : totalSessions * 3
-            const today = new Date()
-            today.setHours(0, 0, 0, 0)
-            let safety = 0
-
-            while (sessionCount < totalSessions && weekCount < maxWeeks && safety < maxWeeks * 3) {
-              safety++
-              const dateStr = formatLocalDate(current)
-              const isHoliday = holidays?.some((h: any) =>
-                h.date === dateStr && h.course_id === courseId
-              )
-
-              if (isHoliday) {
-                // 連假不算堂數也不算週數
-                scheduleEntries.push({ date: dateStr, type: 'holiday', session: null, status: '連假暫停', deducted: false })
-              } else {
-                weekCount++
-                const att = courseAttendance.find((a: any) => a.date === dateStr)
-                const isLeave = att && ['請假', '病假'].includes(att.status)
-
-                if (isLeave) {
-                  // 請假/病假：計入週數但不計入堂數
-                  scheduleEntries.push({ date: dateStr, type: 'class', session: null, status: att.status, deducted: att?.deducted || false })
-                } else {
-                  sessionCount++
-                  let status = '待上課'
-                  if (att) {
-                    status = att.status
-                  } else if (current < today) {
-                    status = '未記錄'
-                  }
-                  scheduleEntries.push({ date: dateStr, type: 'class', session: sessionCount, status, deducted: att?.deducted || false })
-                }
-              }
-
-              current.setDate(current.getDate() + 7)
-            }
-
-            // 週數用完但堂數未完的提示
-            if (planWeeks > 0 && weekCount >= planWeeks && sessionCount < totalSessions) {
+            for (const hd of courseHolidayDates) {
               scheduleEntries.push({
-                date: '',
-                type: 'notice',
+                date: hd,
+                type: 'holiday' as const,
                 session: null,
-                status: `週數已用完，剩餘 ${totalSessions - sessionCount} 堂請轉班上課`,
+                status: '連假暫停',
                 deducted: false,
               })
             }
+            // 重新按日期排序
+            scheduleEntries.sort((a, b) => (a.date || '').localeCompare(b.date || ''))
           }
 
           return {

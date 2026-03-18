@@ -30,6 +30,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { Button, Input, Select, Badge, ProgressBar, FormField } from './UI';
 import { supabase } from '../lib/supabase';
+import { generateAttendanceRecords } from '../lib/attendanceUtils';
 import { Course, CourseChangeLog, VenueContract } from '../types';
 
 interface AdminCourseManagementProps {
@@ -476,6 +477,10 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
           status: '已報名',
         }))
       )
+      // 為每位學員自動建立待上課記錄
+      for (const s of addedStudents) {
+        await generateAttendanceRecords(s.id, courseData.id)
+      }
     }
 
     alert('課程新增成功！')
@@ -574,6 +579,9 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
       status: '已報名',
     }).select('id').single()
     if (error) { alert('新增學員失敗：' + error.message); return; }
+
+    // 自動建立待上課記錄
+    await generateAttendanceRecords(studentId, selectedCourse.id)
 
     const enrolled = selectedCourse._enrolledStudents || []
     const student = existingStudents.find((s: any) => s.id === studentId)

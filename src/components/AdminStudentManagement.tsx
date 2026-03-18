@@ -34,6 +34,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { Button, Input, Select, Badge, ProgressBar, FormField } from './UI';
 import { supabase } from '../lib/supabase';
+import { generateAttendanceRecords } from '../lib/attendanceUtils';
 import { Session, SessionUsage, WaitlistEntry } from '../types';
 
 export const AdminStudentManagement: React.FC<{
@@ -178,7 +179,10 @@ export const AdminStudentManagement: React.FC<{
       .eq('student_id', studentId)
       .eq('status', '已報名')
 
+    console.log('[課程日期] 查到 enrollments:', enrollments)
+
     if (!enrollments || enrollments.length === 0) {
+      console.log('[課程日期] 無已報名的 enrollment，清空 map')
       setCourseAttendanceMap({})
       return
     }
@@ -191,9 +195,10 @@ export const AdminStudentManagement: React.FC<{
         .eq('student_id', studentId)
         .eq('course_id', enrollment.course_id)
         .order('date')
-      console.log('課程', enrollment.course_id, 'attendance:', data)
+      console.log('[課程日期] 課程', enrollment.course_id, 'attendance 筆數:', data?.length, '資料:', data)
       map[enrollment.course_id] = data || []
     }
+    console.log('[課程日期] 最終 courseAttendanceMap:', map)
     setCourseAttendanceMap(map)
   }
 
@@ -229,7 +234,6 @@ export const AdminStudentManagement: React.FC<{
         .from('venue_contracts')
         .select('start_date, end_date')
         .eq('venue_id', course.venue_id)
-        .eq('status', 'active')
         .order('end_date', { ascending: false })
         .limit(1)
       if (contracts && contracts.length > 0) {
@@ -403,6 +407,9 @@ export const AdminStudentManagement: React.FC<{
       status: '已報名',
     })
 
+    // 自動建立待上課的 attendance 記錄
+    await generateAttendanceRecords(operatingStudent.id, courseId)
+
     alert('劃位成功')
     fetchStudentDetail(operatingStudent.id)
     fetchStudents()
@@ -411,16 +418,34 @@ export const AdminStudentManagement: React.FC<{
   const handleTransfer = async (fromEnrollmentId: string, toCourseId: string) => {
     if (!operatingStudent) return
 
+    // 取得舊 enrollment 的 course_id
+    const { data: oldEnrollment } = await supabase
+      .from('enrollments')
+      .select('course_id')
+      .eq('id', fromEnrollmentId)
+      .single()
+
     await supabase.from('enrollments').update({
       status: '已退出',
       withdrawn_at: new Date().toISOString(),
     }).eq('id', fromEnrollmentId)
+
+    // 刪除舊課程未來的待上課記錄
+    if (oldEnrollment) {
+      await supabase.from('attendance').delete()
+        .eq('student_id', operatingStudent.id)
+        .eq('course_id', oldEnrollment.course_id)
+        .eq('status', '待上課')
+    }
 
     await supabase.from('enrollments').insert({
       student_id: operatingStudent.id,
       course_id: toCourseId,
       status: '已報名',
     })
+
+    // 自動建立新課程的待上課記錄
+    await generateAttendanceRecords(operatingStudent.id, toCourseId)
 
     alert('轉班成功')
     fetchStudentDetail(operatingStudent.id)
