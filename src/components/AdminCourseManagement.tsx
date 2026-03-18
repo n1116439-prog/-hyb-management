@@ -1278,31 +1278,29 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
                           </Button>
                         </div>
 
-                        <div className="grid grid-cols-3 gap-4">
+                        <div className="divide-y divide-neutral-100 border border-neutral-100 rounded-2xl overflow-hidden">
                           {(selectedCourse._enrolledStudents || []).map((student: any) => (
                             <div
                               key={student.enrollmentId}
-                              className="flex items-center justify-between p-4 rounded-2xl bg-neutral-50 border border-neutral-100 group cursor-pointer hover:shadow-md hover:border-primary/30 transition-all"
+                              className="flex items-center justify-between px-4 h-12 bg-white group cursor-pointer hover:bg-neutral-50 transition-colors"
                               onClick={() => fetchStudentDetail(student.studentId)}
                             >
                               <div className="flex items-center gap-3">
-                                <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold shadow-sm ${
+                                <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold ${
                                   student.category === 'adult' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'
                                 }`}>
                                   {student.name?.[0]}
                                 </div>
-                                <div>
-                                  <span className="font-bold text-neutral-900">{student.name}</span>
-                                  {student.studentCode && (
-                                    <p className="text-xs text-neutral-500">{student.studentCode}</p>
-                                  )}
-                                </div>
+                                <span className="font-medium text-sm text-neutral-900">{student.name}</span>
+                                {student.studentCode && (
+                                  <span className="text-xs text-neutral-400">{student.studentCode}</span>
+                                )}
                               </div>
                               <button
                                 onClick={(e) => { e.stopPropagation(); handleRemoveStudentByEnrollment(student.enrollmentId, student.name); }}
-                                className="p-2 text-neutral-400 hover:text-danger opacity-0 group-hover:opacity-100 transition-all"
+                                className="p-1.5 text-neutral-300 hover:text-danger opacity-0 group-hover:opacity-100 transition-all"
                               >
-                                <UserMinus size={18} />
+                                <UserMinus size={16} />
                               </button>
                             </div>
                           ))}
