@@ -71,6 +71,16 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
     const now = new Date()
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
   })
+  const [importStep, setImportStep] = useState(1)
+  const [importCreditSettings, setImportCreditSettings] = useState<Record<string, {
+    source: 'existing' | 'manual'
+    manualAmount: number
+    existingRemaining: number
+    selectedDates: string[]
+  }>>({})
+  const [importCourseDates, setImportCourseDates] = useState<string[]>([])
+  const [importHolidays, setImportHolidays] = useState<string[]>([])
+  const [importSaving, setImportSaving] = useState(false)
 
   const fetchCoaches = async () => {
     const { data } = await supabase
@@ -1238,6 +1248,8 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
                               fetchExistingStudents()
                               setAddedStudents([])
                               setStudentSearchQuery('')
+                              setImportStep(1)
+                              setImportCreditSettings({})
                               setShowImportStudentModal(true)
                             }}
                           >
@@ -2327,96 +2339,422 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
       {/* Import Students Modal */}
       {showImportStudentModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4">
-          <div className="bg-white rounded-2xl w-full max-w-md max-h-[80vh] overflow-hidden flex flex-col">
+          <div className="bg-white rounded-2xl w-full max-w-lg max-h-[85vh] overflow-hidden flex flex-col">
+            {/* Header */}
             <div className="p-6 border-b">
               <h3 className="text-lg font-bold">匯入現有學員</h3>
-            </div>
-
-            <div className="p-4 border-b space-y-3">
-              <input
-                type="text"
-                placeholder="搜尋學員姓名或電話..."
-                value={studentSearchQuery}
-                onChange={e => setStudentSearchQuery(e.target.value)}
-                className="w-full px-4 py-2 border rounded-lg text-sm outline-none focus:border-primary"
-              />
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  placeholder="輸入學生編碼（如 ST-001）"
-                  value={manualStudentNumber}
-                  onChange={e => setManualStudentNumber(e.target.value)}
-                  className="flex-1 px-4 py-2 border rounded-lg text-sm outline-none focus:border-primary"
-                />
-                <button
-                  onClick={() => {
-                    const found = existingStudents.find(s => s.student_code === manualStudentNumber)
-                    if (found && !addedStudents.find(a => a.id === found.id)) {
-                      setAddedStudents(prev => [...prev, found])
-                      setManualStudentNumber('')
-                    } else if (!found) {
-                      alert('找不到此學生編碼')
-                    }
-                  }}
-                  className="px-4 py-2 bg-primary text-white rounded-lg text-sm font-medium"
-                >
-                  加入
-                </button>
+              <div className="flex items-center gap-2 mt-3">
+                {[1, 2, 3].map(s => (
+                  <div key={s} className="flex items-center gap-1">
+                    <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold ${
+                      importStep >= s ? 'bg-primary text-white' : 'bg-neutral-200 text-neutral-400'
+                    }`}>{s}</div>
+                    <span className={`text-xs ${importStep >= s ? 'text-primary font-medium' : 'text-neutral-400'}`}>
+                      {s === 1 ? '選擇學員' : s === 2 ? '設定堂數' : '確認匯入'}
+                    </span>
+                    {s < 3 && <div className="w-6 h-0.5 bg-neutral-200 mx-1" />}
+                  </div>
+                ))}
               </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-4 space-y-2">
-              {existingStudents
-                .filter(s => {
-                  const q = studentSearchQuery.toLowerCase()
-                  return !q || s.name?.toLowerCase().includes(q) || s.phone?.includes(q) || s.student_code?.toLowerCase().includes(q)
-                })
-                .map(student => {
-                  const isAdded = addedStudents.find(a => a.id === student.id)
-                  return (
-                    <div key={student.id}
-                      className={`flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-all ${isAdded ? 'bg-primary/5 border-primary' : 'hover:bg-neutral-50 border-neutral-100'}`}
+            {/* Step 1: 選擇學員 */}
+            {importStep === 1 && (
+              <>
+                <div className="p-4 border-b space-y-3">
+                  <input
+                    type="text"
+                    placeholder="搜尋學員姓名或電話..."
+                    value={studentSearchQuery}
+                    onChange={e => setStudentSearchQuery(e.target.value)}
+                    className="w-full px-4 py-2 border rounded-lg text-sm outline-none focus:border-primary"
+                  />
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      placeholder="輸入學生編碼（如 ST-001）"
+                      value={manualStudentNumber}
+                      onChange={e => setManualStudentNumber(e.target.value)}
+                      className="flex-1 px-4 py-2 border rounded-lg text-sm outline-none focus:border-primary"
+                    />
+                    <button
                       onClick={() => {
-                        if (isAdded) {
-                          setAddedStudents(prev => prev.filter(a => a.id !== student.id))
-                        } else {
-                          setAddedStudents(prev => [...prev, student])
+                        const found = existingStudents.find(s => s.student_code === manualStudentNumber)
+                        if (found && !addedStudents.find(a => a.id === found.id)) {
+                          setAddedStudents(prev => [...prev, found])
+                          setManualStudentNumber('')
+                        } else if (!found) {
+                          alert('找不到此學生編碼')
                         }
                       }}
+                      className="px-4 py-2 bg-primary text-white rounded-lg text-sm font-medium"
                     >
-                      <div>
-                        <p className="font-medium text-sm">{student.name}</p>
-                        <p className="text-xs text-neutral-500">{student.student_code || ''} {student.phone ? `· ${student.phone}` : ''}</p>
-                      </div>
-                      {isAdded && <span className="text-primary font-bold">✓</span>}
-                    </div>
-                  )
-                })}
-              {existingStudents.length === 0 && (
-                <p className="text-center text-neutral-500 py-8">尚無學員資料</p>
-              )}
-            </div>
+                      加入
+                    </button>
+                  </div>
+                </div>
 
-            <div className="p-4 border-t flex gap-3">
-              <button onClick={() => setShowImportStudentModal(false)} className="flex-1 py-3 bg-neutral-100 rounded-xl font-medium text-sm">
-                取消
-              </button>
-              <button
-                onClick={async () => {
-                  for (const student of addedStudents) {
-                    // 避免重複新增
-                    const alreadyEnrolled = (selectedCourse?._enrolledStudents || []).find((s: any) => s.studentId === student.id)
-                    if (!alreadyEnrolled) {
-                      await handleAddStudentById(student.id, student.name)
-                    }
-                  }
-                  setShowImportStudentModal(false)
-                }}
-                className="flex-1 py-3 bg-primary text-white rounded-xl font-medium text-sm"
-              >
-                確認匯入 ({addedStudents.length})
-              </button>
-            </div>
+                <div className="flex-1 overflow-y-auto p-4 space-y-2">
+                  {existingStudents
+                    .filter(s => {
+                      const q = studentSearchQuery.toLowerCase()
+                      return !q || s.name?.toLowerCase().includes(q) || s.phone?.includes(q) || s.student_code?.toLowerCase().includes(q)
+                    })
+                    .map(student => {
+                      const isAdded = addedStudents.find(a => a.id === student.id)
+                      return (
+                        <div key={student.id}
+                          className={`flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-all ${isAdded ? 'bg-primary/5 border-primary' : 'hover:bg-neutral-50 border-neutral-100'}`}
+                          onClick={() => {
+                            if (isAdded) {
+                              setAddedStudents(prev => prev.filter(a => a.id !== student.id))
+                            } else {
+                              setAddedStudents(prev => [...prev, student])
+                            }
+                          }}
+                        >
+                          <div>
+                            <p className="font-medium text-sm">{student.name}</p>
+                            <p className="text-xs text-neutral-500">{student.student_code || ''} {student.phone ? `· ${student.phone}` : ''}</p>
+                          </div>
+                          {isAdded && <span className="text-primary font-bold">✓</span>}
+                        </div>
+                      )
+                    })}
+                  {existingStudents.length === 0 && (
+                    <p className="text-center text-neutral-500 py-8">尚無學員資料</p>
+                  )}
+                </div>
+
+                <div className="p-4 border-t flex gap-3">
+                  <button onClick={() => setShowImportStudentModal(false)} className="flex-1 py-3 bg-neutral-100 rounded-xl font-medium text-sm">
+                    取消
+                  </button>
+                  <button
+                    disabled={addedStudents.length === 0}
+                    onClick={async () => {
+                      // 進入 Step 2：載入每位學員的 credits 與課程日期
+                      const studentIds = addedStudents.map(s => s.id)
+                      const { data: allCredits } = await supabase.from('credits').select('*').in('student_id', studentIds).eq('status', 'active')
+                      const { data: holidays } = await supabase.from('course_holidays').select('date').eq('course_id', selectedCourse?.id)
+
+                      const holidayDates = (holidays || []).map((h: any) => h.date)
+                      setImportHolidays(holidayDates)
+
+                      // 生成課程所有可上課日期
+                      const weekdayMap: Record<string, number> = { '週日': 0, '週一': 1, '週二': 2, '週三': 3, '週四': 4, '週五': 5, '週六': 6 }
+                      const targetDay = weekdayMap[selectedCourse?.schedule || '']
+                      const dates: string[] = []
+                      if (targetDay !== undefined) {
+                        const start = new Date()
+                        start.setHours(0, 0, 0, 0)
+                        // 往前推 6 個月到往後推 12 個月的範圍
+                        const rangeStart = new Date(start)
+                        rangeStart.setMonth(rangeStart.getMonth() - 6)
+                        const rangeEnd = new Date(start)
+                        rangeEnd.setMonth(rangeEnd.getMonth() + 12)
+                        const current = new Date(rangeStart)
+                        while (current.getDay() !== targetDay) current.setDate(current.getDate() + 1)
+                        while (current <= rangeEnd) {
+                          const dateStr = formatLocalDate(current)
+                          if (!holidayDates.includes(dateStr)) {
+                            dates.push(dateStr)
+                          }
+                          current.setDate(current.getDate() + 7)
+                        }
+                      }
+                      setImportCourseDates(dates)
+
+                      // 初始化每位學員的設定
+                      const settings: typeof importCreditSettings = {}
+                      for (const student of addedStudents) {
+                        const studentCredits = allCredits?.filter((c: any) => c.student_id === student.id) || []
+                        const remaining = studentCredits.reduce((sum: number, c: any) => sum + (c.remaining_credits || 0), 0)
+                        settings[student.id] = {
+                          source: remaining > 0 ? 'existing' : 'manual',
+                          manualAmount: 0,
+                          existingRemaining: remaining,
+                          selectedDates: [],
+                        }
+                      }
+                      setImportCreditSettings(settings)
+                      setImportStep(2)
+                    }}
+                    className={`flex-1 py-3 rounded-xl font-medium text-sm ${addedStudents.length > 0 ? 'bg-primary text-white' : 'bg-neutral-200 text-neutral-400'}`}
+                  >
+                    下一步 ({addedStudents.length})
+                  </button>
+                </div>
+              </>
+            )}
+
+            {/* Step 2: 設定堂數與劃位 */}
+            {importStep === 2 && (
+              <>
+                <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                  {addedStudents.map(student => {
+                    const setting = importCreditSettings[student.id]
+                    if (!setting) return null
+                    const maxCredits = setting.source === 'existing' ? setting.existingRemaining : setting.manualAmount
+                    const today = formatLocalDate(new Date())
+
+                    return (
+                      <div key={student.id} className="border border-neutral-200 rounded-2xl p-4 space-y-3">
+                        {/* 學員資訊 */}
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-sm">
+                            {student.name?.charAt(0)}
+                          </div>
+                          <div>
+                            <p className="font-bold text-sm">{student.name}</p>
+                            <p className="text-xs text-neutral-500">{student.student_code || ''}</p>
+                          </div>
+                        </div>
+
+                        {/* 堂數來源選擇 */}
+                        <div className="space-y-2">
+                          <p className="text-xs font-medium text-neutral-700">堂數來源</p>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => setImportCreditSettings(prev => ({
+                                ...prev,
+                                [student.id]: { ...setting, source: 'existing', selectedDates: setting.selectedDates.slice(0, setting.existingRemaining) }
+                              }))}
+                              className={`flex-1 py-2 px-3 rounded-lg text-xs font-medium border transition-all ${
+                                setting.source === 'existing' ? 'border-primary bg-primary/5 text-primary' : 'border-neutral-200 text-neutral-500'
+                              }`}
+                            >
+                              使用現有堂數（剩餘 {setting.existingRemaining}）
+                            </button>
+                            <button
+                              onClick={() => setImportCreditSettings(prev => ({
+                                ...prev,
+                                [student.id]: { ...setting, source: 'manual', selectedDates: setting.selectedDates.slice(0, setting.manualAmount || 0) }
+                              }))}
+                              className={`flex-1 py-2 px-3 rounded-lg text-xs font-medium border transition-all ${
+                                setting.source === 'manual' ? 'border-primary bg-primary/5 text-primary' : 'border-neutral-200 text-neutral-500'
+                              }`}
+                            >
+                              手動輸入
+                            </button>
+                          </div>
+                          {setting.source === 'manual' && (
+                            <input
+                              type="number"
+                              min={1}
+                              placeholder="輸入堂數"
+                              value={setting.manualAmount || ''}
+                              onChange={e => {
+                                const val = parseInt(e.target.value) || 0
+                                setImportCreditSettings(prev => ({
+                                  ...prev,
+                                  [student.id]: { ...setting, manualAmount: val, selectedDates: setting.selectedDates.slice(0, val) }
+                                }))
+                              }}
+                              className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-primary"
+                            />
+                          )}
+                        </div>
+
+                        {/* 日期劃位 */}
+                        {maxCredits > 0 && (
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                              <p className="text-xs font-medium text-neutral-700">
+                                劃位日期 <span className={`${setting.selectedDates.length === maxCredits ? 'text-green-600' : 'text-primary'}`}>
+                                  已選 {setting.selectedDates.length} / {maxCredits} 堂
+                                </span>
+                              </p>
+                              <button
+                                onClick={() => {
+                                  const futureDates = importCourseDates.filter(d => d >= today)
+                                  const autoSelected = futureDates.slice(0, maxCredits)
+                                  setImportCreditSettings(prev => ({
+                                    ...prev,
+                                    [student.id]: { ...setting, selectedDates: autoSelected }
+                                  }))
+                                }}
+                                className="text-xs text-primary font-medium hover:underline"
+                              >
+                                自動劃位
+                              </button>
+                            </div>
+                            <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto">
+                              {importCourseDates.map(date => {
+                                const isSelected = setting.selectedDates.includes(date)
+                                const isPast = date < today
+                                const isFull = !isSelected && setting.selectedDates.length >= maxCredits
+                                return (
+                                  <button
+                                    key={date}
+                                    disabled={isPast || (isFull && !isSelected)}
+                                    onClick={() => {
+                                      setImportCreditSettings(prev => ({
+                                        ...prev,
+                                        [student.id]: {
+                                          ...setting,
+                                          selectedDates: isSelected
+                                            ? setting.selectedDates.filter(d => d !== date)
+                                            : [...setting.selectedDates, date].sort()
+                                        }
+                                      }))
+                                    }}
+                                    className={`px-2 py-1 rounded-lg text-xs font-medium transition-all ${
+                                      isPast ? 'bg-neutral-100 text-neutral-300 cursor-not-allowed' :
+                                      isSelected ? 'bg-primary text-white' :
+                                      isFull ? 'bg-neutral-50 text-neutral-300 cursor-not-allowed' :
+                                      'bg-neutral-50 text-neutral-600 border border-neutral-200 hover:border-primary'
+                                    }`}
+                                  >
+                                    {date.slice(5)}
+                                  </button>
+                                )
+                              })}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+
+                <div className="p-4 border-t flex gap-3">
+                  <button onClick={() => setImportStep(1)} className="flex-1 py-3 bg-neutral-100 rounded-xl font-medium text-sm">
+                    上一步
+                  </button>
+                  <button
+                    disabled={!addedStudents.every(s => {
+                      const setting = importCreditSettings[s.id]
+                      if (!setting) return false
+                      const max = setting.source === 'existing' ? setting.existingRemaining : setting.manualAmount
+                      return max > 0 && setting.selectedDates.length > 0
+                    })}
+                    onClick={() => setImportStep(3)}
+                    className={`flex-1 py-3 rounded-xl font-medium text-sm ${
+                      addedStudents.every(s => {
+                        const setting = importCreditSettings[s.id]
+                        if (!setting) return false
+                        const max = setting.source === 'existing' ? setting.existingRemaining : setting.manualAmount
+                        return max > 0 && setting.selectedDates.length > 0
+                      }) ? 'bg-primary text-white' : 'bg-neutral-200 text-neutral-400'
+                    }`}
+                  >
+                    下一步
+                  </button>
+                </div>
+              </>
+            )}
+
+            {/* Step 3: 確認匯入 */}
+            {importStep === 3 && (
+              <>
+                <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                  {addedStudents.map(student => {
+                    const setting = importCreditSettings[student.id]
+                    if (!setting) return null
+                    const maxCredits = setting.source === 'existing' ? setting.existingRemaining : setting.manualAmount
+
+                    return (
+                      <div key={student.id} className="border border-neutral-200 rounded-2xl p-4 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-xs">
+                              {student.name?.charAt(0)}
+                            </div>
+                            <div>
+                              <p className="font-bold text-sm">{student.name}</p>
+                              <p className="text-xs text-neutral-500">{student.student_code || ''}</p>
+                            </div>
+                          </div>
+                          <span className="text-xs bg-primary/10 text-primary px-2 py-1 rounded-full font-medium">
+                            {setting.selectedDates.length} 堂
+                          </span>
+                        </div>
+                        <div className="text-xs text-neutral-500">
+                          <p>堂數來源：{setting.source === 'existing' ? `使用現有堂數（剩餘 ${setting.existingRemaining}）` : `手動新增 ${setting.manualAmount} 堂`}</p>
+                          <p>劃位日期：{setting.selectedDates.map(d => d.slice(5)).join('、')}</p>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+
+                <div className="p-4 border-t flex gap-3">
+                  <button onClick={() => setImportStep(2)} className="flex-1 py-3 bg-neutral-100 rounded-xl font-medium text-sm">
+                    上一步
+                  </button>
+                  <button
+                    disabled={importSaving}
+                    onClick={async () => {
+                      if (!selectedCourse) return
+                      setImportSaving(true)
+
+                      try {
+                        for (const student of addedStudents) {
+                          const setting = importCreditSettings[student.id]
+                          if (!setting) continue
+
+                          // 1. 手動堂數：新增 credits 記錄
+                          if (setting.source === 'manual' && setting.manualAmount > 0) {
+                            const expiryDate = new Date()
+                            expiryDate.setDate(expiryDate.getDate() + setting.manualAmount * 7 + 14)
+                            await supabase.from('credits').insert({
+                              student_id: student.id,
+                              course_id: selectedCourse.id,
+                              total_credits: setting.manualAmount,
+                              used_credits: 0,
+                              remaining_credits: setting.manualAmount,
+                              leave_count: 0,
+                              max_leave: 4,
+                              plan_weeks: setting.manualAmount + 5,
+                              expiry_date: formatLocalDate(expiryDate),
+                              status: 'active',
+                            })
+                          }
+
+                          // 2. 刪除舊 enrollment 再 insert
+                          await supabase.from('enrollments').delete().eq('student_id', student.id).eq('course_id', selectedCourse.id)
+                          await supabase.from('enrollments').insert({
+                            student_id: student.id,
+                            course_id: selectedCourse.id,
+                            status: '已報名',
+                          })
+
+                          // 3. 為每個已選日期 insert attendance（先刪再插避免重複）
+                          for (const date of setting.selectedDates) {
+                            await supabase.from('attendance').delete()
+                              .eq('student_id', student.id)
+                              .eq('course_id', selectedCourse.id)
+                              .eq('date', date)
+                            await supabase.from('attendance').insert({
+                              course_id: selectedCourse.id,
+                              student_id: student.id,
+                              date,
+                              status: '待上課',
+                              deducted: false,
+                            })
+                          }
+                        }
+
+                        alert('匯入成功！')
+                        setShowImportStudentModal(false)
+                        setImportStep(1)
+                        setAddedStudents([])
+                        setImportCreditSettings({})
+                        await fetchCourses()
+                      } catch (err: any) {
+                        alert('匯入失敗：' + (err?.message || '未知錯誤'))
+                      } finally {
+                        setImportSaving(false)
+                      }
+                    }}
+                    className={`flex-1 py-3 rounded-xl font-medium text-sm ${importSaving ? 'bg-neutral-300 text-neutral-500' : 'bg-primary text-white'}`}
+                  >
+                    {importSaving ? '匯入中...' : `確認匯入 (${addedStudents.length})`}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
