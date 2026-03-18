@@ -150,18 +150,17 @@ export function SessionsPage({ courses, userRole, waitlists, userCategory }: Ses
 
           // 穿插停課日（在最早和最晚 attendance 日期之間的 holidays）
           if (uniqueAttendance.length > 0) {
-            const courseHolidayDates = (holidays || [])
+            const courseHolidayRecords = (holidays || [])
               .filter((h: any) => h.course_id === courseId)
-              .map((h: any) => h.date)
-              .filter((d: string) => d >= uniqueAttendance[0].date && d <= uniqueAttendance[uniqueAttendance.length - 1].date)
-              .filter((d: string) => !seen.has(d))
+              .filter((h: any) => h.date >= uniqueAttendance[0].date && h.date <= uniqueAttendance[uniqueAttendance.length - 1].date)
+              .filter((h: any) => !seen.has(h.date))
 
-            for (const hd of courseHolidayDates) {
+            for (const h of courseHolidayRecords) {
               scheduleEntries.push({
-                date: hd,
+                date: h.date,
                 type: 'holiday' as const,
                 session: null,
-                status: '連假暫停',
+                status: h.reason || '停課',
                 deducted: false,
               })
             }
@@ -411,7 +410,7 @@ export function SessionsPage({ courses, userRole, waitlists, userCategory }: Ses
                                     '遲到': 'bg-orange-50 text-orange-600 border border-orange-200',
                                     '病假': 'bg-blue-50 text-blue-600 border border-blue-200',
                                     '補課': 'bg-purple-50 text-purple-600 border border-purple-200',
-                                    '連假暫停': 'bg-neutral-100 text-neutral-400 italic',
+                                    '停課': 'bg-neutral-100 text-neutral-400 italic',
                                     '待上課': 'bg-blue-50 text-blue-500 border border-dashed border-blue-200',
                                     '未記錄': 'bg-neutral-50 text-neutral-400 border border-dashed border-neutral-300',
                                   }
@@ -442,7 +441,11 @@ export function SessionsPage({ courses, userRole, waitlists, userCategory }: Ses
                                       </div>
                                       <div className="flex items-center gap-2">
                                         {entry.deducted && <span className="text-xs text-neutral-400">-1堂</span>}
-                                        <span className={`text-xs px-2 py-1 rounded-full font-medium ${statusStyles[entry.status] || 'bg-neutral-50 text-neutral-500'}`}>
+                                        <span className={`text-xs px-2 py-1 rounded-full font-medium ${
+                                          entry.type === 'holiday'
+                                            ? 'bg-neutral-100 text-neutral-400 italic'
+                                            : (statusStyles[entry.status] || 'bg-neutral-50 text-neutral-500')
+                                        }`}>
                                           {entry.status}
                                         </span>
                                       </div>

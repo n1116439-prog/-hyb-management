@@ -871,6 +871,11 @@ export const AdminStudentManagement: React.FC<{
                                       status: '已退出',
                                       withdrawn_at: new Date().toISOString(),
                                     }).eq('id', enrollment.id);
+                                    // 刪除該學員在此課程的所有「待上課」attendance 記錄
+                                    await supabase.from('attendance').delete()
+                                      .eq('student_id', selectedStudent.id)
+                                      .eq('course_id', enrollment.course_id)
+                                      .eq('status', '待上課');
                                     fetchStudentDetail(selectedStudent.id);
                                     fetchStudents();
                                     alert('已取消報名。如需恢復，請使用劃位功能重新報名。');
