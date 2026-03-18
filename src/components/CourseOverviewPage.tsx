@@ -101,7 +101,7 @@ export const CourseOverviewPage: React.FC<{
               className="relative z-10"
             >
               <h2 className="text-2xl font-bold mb-1">本週開放課程</h2>
-              <p className="text-sm opacity-90 mb-3">共 {courses.length} 個班級 · 本月 238 人</p>
+              <p className="text-sm opacity-90 mb-3">{courses.length > 0 ? `共 ${courses.length} 個班級` : '目前尚無開放課程'}</p>
               <button className="flex items-center gap-1 text-xs font-semibold bg-white/20 backdrop-blur-md px-3 py-1.5 rounded-full hover:bg-white/30 transition-colors">
                 立即申請試上 <ChevronRight size={14} />
               </button>
