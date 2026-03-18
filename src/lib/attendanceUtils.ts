@@ -13,106 +13,91 @@ const weekdayMap: Record<string, number> = {
 }
 
 /**
- * 根據課程的 day_of_week、學員堂數，計算未來應有的上課日期，
- * 然後在 attendance 表中補建 status='待上課' 的記錄。
- *
- * 已存在的 attendance 記錄不會被覆蓋。
- * 回傳新建立的日期陣列。
+ * 已停用：attendance 表現在只記錄已發生的出缺席，
+ * 前端 SessionsPage 會自動計算未來日程，不再預建任何 attendance 紀錄。
  */
 export async function generateAttendanceRecords(
-  studentId: string,
-  courseId: string,
+  _studentId: string,
+  _courseId: string,
 ): Promise<string[]> {
-  // 1. 取課程資訊
+  return []
+}
+
+/**
+ * 根據合約 (venue_contracts) 產生課程日期列表。
+ */
+export async function generateCourseDatesFromContract(
+  courseId: string,
+): Promise<{ dates: string[]; contractStart: string; contractEnd: string } | null> {
+  // 取課程資訊
   const { data: course } = await supabase
     .from('courses')
     .select('day_of_week')
     .eq('id', courseId)
     .single()
-  if (!course) return []
+  if (!course) return null
 
   const targetDay = weekdayMap[course.day_of_week]
-  if (targetDay === undefined) return []
+  if (targetDay === undefined) return null
 
-  // 2. 取學員的 credits（用來決定總堂數）
-  const { data: credits } = await supabase
-    .from('credits')
-    .select('total_credits, plan_weeks')
-    .eq('student_id', studentId)
-    .eq('status', 'active')
+  // 取合約
+  const { data: contracts } = await supabase
+    .from('venue_contracts')
+    .select('start_date, end_date')
+    .eq('course_id', courseId)
+    .order('start_date', { ascending: true })
 
-  if (!credits || credits.length === 0) return []
+  if (!contracts || contracts.length === 0) return null
 
-  const totalCredits = credits.reduce((sum, c) => sum + (c.total_credits || 0), 0)
-  const planWeeks = credits.reduce((sum, c) => sum + (c.plan_weeks || 0), 0)
-  if (totalCredits <= 0) return []
+  const contractStart = contracts[0].start_date
+  const contractEnd = contracts[contracts.length - 1].end_date
 
-  // 3. 取該課程的停課日
+  // 取停課日
   const { data: holidays } = await supabase
     .from('course_holidays')
     .select('date')
     .eq('course_id', courseId)
-  const holidayDates = new Set((holidays || []).map(h => h.date))
+  const holidayDates = new Set((holidays || []).map((h: { date: string }) => h.date))
 
-  // 4. 取已存在的 attendance 記錄
-  const { data: existingAtt } = await supabase
-    .from('attendance')
-    .select('date, status')
-    .eq('student_id', studentId)
-    .eq('course_id', courseId)
-  const existingDates = new Set((existingAtt || []).map(a => a.date))
+  // 產生日期
+  const dates: string[] = []
+  const start = new Date(contractStart + 'T00:00:00')
+  const end = new Date(contractEnd + 'T00:00:00')
 
-  // 已用堂數 = 已有的非請假 attendance 記錄數
-  const usedSessions = (existingAtt || []).filter(
-    a => !['請假', '病假'].includes(a.status)
-  ).length
-  const remainingSessions = totalCredits - usedSessions
-  if (remainingSessions <= 0) return []
-
-  // 5. 從今天開始，按 day_of_week 推算未來日期
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
-  const current = new Date(today)
+  const current = new Date(start)
   while (current.getDay() !== targetDay) {
     current.setDate(current.getDate() + 1)
   }
 
-  const maxWeeks = planWeeks > 0 ? planWeeks : totalCredits * 3
-  const newDates: string[] = []
-  let sessionCount = 0
-  let weekCount = 0
-
-  while (sessionCount < remainingSessions && weekCount < maxWeeks) {
+  while (current <= end) {
     const dateStr = formatLocalDate(current)
-    if (holidayDates.has(dateStr)) {
-      // 停課日跳過，不計週數
-    } else {
-      weekCount++
-      if (!existingDates.has(dateStr)) {
-        newDates.push(dateStr)
-        sessionCount++
-      }
+    if (!holidayDates.has(dateStr)) {
+      dates.push(dateStr)
     }
     current.setDate(current.getDate() + 7)
   }
 
-  if (newDates.length === 0) return []
+  return { dates, contractStart, contractEnd }
+}
 
-  // 6. 批次建立 attendance 記錄
-  const inserts = newDates.map(date => ({
-    student_id: studentId,
-    course_id: courseId,
-    date,
-    status: '待上課',
-    deducted: false,
-  }))
+/**
+ * 已停用：不再預建 attendance 紀錄。
+ * 保留函式簽名以維持相容性，回傳 0。
+ */
+export async function batchCreateAttendanceForDate(
+  _courseId: string,
+  _date: string,
+): Promise<number> {
+  return 0
+}
 
-  const { error } = await supabase.from('attendance').insert(inserts)
-  if (error) {
-    console.error('generateAttendanceRecords insert 失敗:', error)
-    return []
-  }
-
-  console.log(`[attendanceUtils] 已為學員 ${studentId} 在課程 ${courseId} 建立 ${newDates.length} 筆待上課記錄`)
-  return newDates
+/**
+ * 已停用：不再預建 attendance 紀錄。
+ * 保留函式簽名以維持相容性，回傳 0。
+ */
+export async function batchDeletePendingAttendanceForDate(
+  _courseId: string,
+  _date: string,
+): Promise<number> {
+  return 0
 }
