@@ -148,10 +148,15 @@ export function SessionsPage({ courses, userRole, waitlists, userCategory }: Ses
             }
           })
 
-          // 穿插停課日（在最早和最晚 attendance 日期之間的 holidays）
+          // 穿插停課日（在最早和最晚 attendance 日期之間的 holidays，且星期幾需匹配）
           if (uniqueAttendance.length > 0) {
             const courseHolidayRecords = (holidays || [])
               .filter((h: any) => h.course_id === courseId)
+              .filter((h: any) => {
+                // 確保停課日的星期幾跟課程的 day_of_week 一致
+                const hDay = new Date(h.date + 'T00:00:00').getDay()
+                return targetDay === undefined || hDay === targetDay
+              })
               .filter((h: any) => h.date >= uniqueAttendance[0].date && h.date <= uniqueAttendance[uniqueAttendance.length - 1].date)
               .filter((h: any) => !seen.has(h.date))
 
