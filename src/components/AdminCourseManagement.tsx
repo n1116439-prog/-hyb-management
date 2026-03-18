@@ -1603,6 +1603,18 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
       return;
     }
 
+    // 檢查學員是否有可用堂數
+    const { data: credits } = await supabase
+      .from('credits')
+      .select('remaining_credits')
+      .eq('student_id', student.id)
+      .eq('status', 'active');
+    const hasCredits = (credits || []).some(c => (c.remaining_credits || 0) > 0);
+    if (!hasCredits) {
+      alert('該學員沒有可用堂數，請先加堂再報名');
+      return;
+    }
+
     if (withdrawn) {
       // 重新報名：更新已退出的紀錄
       const { error } = await supabase.from('enrollments').update({
