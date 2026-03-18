@@ -96,8 +96,8 @@ export function SessionsPage({ courses, userRole, waitlists, userCategory }: Ses
         studentNumber: s.student_code || s.student_number || '',
         category: s.category || 'child',
         totalCredits: studentCreds.reduce((sum: number, c: any) => sum + (c.total_credits || 0), 0),
-        usedCredits: studentCreds.reduce((sum: number, c: any) => sum + (c.used_credits || 0), 0),
-        remainingCredits: studentCreds.reduce((sum: number, c: any) => sum + (c.remaining_credits || 0), 0),
+        usedCredits: studentAttendance.filter((a: any) => a.deducted === true).length,
+        remainingCredits: studentCreds.reduce((sum: number, c: any) => sum + (c.total_credits || 0), 0) - studentAttendance.filter((a: any) => a.deducted === true).length,
         leaveCount: studentCreds.reduce((sum: number, c: any) => sum + (c.leave_count || 0), 0),
         maxLeave: studentCreds.reduce((sum: number, c: any) => sum + (c.max_leave || 0), 0),
         expiryDate: studentCreds.length > 0 ? studentCreds.sort((a: any, b: any) => (b.expiry_date || '').localeCompare(a.expiry_date || ''))[0]?.expiry_date || '' : '',
@@ -408,17 +408,12 @@ export function SessionsPage({ courses, userRole, waitlists, userCategory }: Ses
                 {/* 課程日程 tab */}
                 {activeStudentTab[student.id] === 'records' && (
                   <div className="p-4 space-y-3">
-                    {/* 堂數摘要 */}
+                    {/* 堂數摘要 — 總計 */}
                     <div className="bg-neutral-50 rounded-xl p-3 flex items-center justify-between">
                       <div>
-                        <p className="text-sm text-neutral-500">堂數使用狀況</p>
+                        <p className="text-sm text-neutral-500">堂數使用狀況（全部課程）</p>
                         <p className="text-lg font-bold">
                           已上 <span className="text-primary">{student.usedCredits}</span> / 共 {student.totalCredits} 堂
-                          {student.planWeeks > 0 && (() => {
-                            const usedWeeks = student.courses.reduce((sum, c) =>
-                              sum + c.scheduleEntries.filter(e => e.type === 'class').length, 0)
-                            return <span className="text-sm font-normal text-neutral-500">（剩餘 {Math.max(0, student.planWeeks - usedWeeks)} 週）</span>
-                          })()}
                         </p>
                       </div>
                       <div className="text-right">
@@ -428,6 +423,31 @@ export function SessionsPage({ courses, userRole, waitlists, userCategory }: Ses
                         </p>
                       </div>
                     </div>
+
+                    {/* 各課程堂數統計 */}
+                    {student.courses.length > 0 && (
+                      <div className="space-y-1">
+                        {student.courses.map(course => {
+                          const classEntries = course.scheduleEntries.filter(e => e.type === 'class')
+                          const attended = classEntries.filter(e => e.deducted).length
+                          const totalForCourse = course.scheduleEntries.filter(e => e.type === 'class' || e.type === 'notice').length > 0
+                            ? course.scheduleEntries.filter(e => e.session !== null).reduce((max, e) => Math.max(max, e.session || 0), 0)
+                            : 0
+                          const leaveCount = classEntries.filter(e => ['請假', '病假'].includes(e.status)).length
+                          const absentCount = classEntries.filter(e => e.status === '缺席').length
+                          return (
+                            <div key={course.id} className="bg-white border border-neutral-100 rounded-lg px-3 py-2 flex items-center justify-between text-sm">
+                              <span className="font-medium text-neutral-700">{course.courseName}</span>
+                              <div className="flex gap-3 text-xs">
+                                <span>已上 <span className="font-bold text-primary">{attended}</span> / 共 {totalForCourse} 堂</span>
+                                {leaveCount > 0 && <span className="text-yellow-600">請假 {leaveCount}</span>}
+                                {absentCount > 0 && <span className="text-red-500">缺席 {absentCount}</span>}
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
 
                     {student.expiryDate && (
                       <div className={`text-xs px-3 py-2 rounded-lg ${
