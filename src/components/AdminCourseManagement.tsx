@@ -167,6 +167,18 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
       reason: newHolidayReason || '停課',
     })
 
+    // 自動刪除該停課日所有「待上課」的 attendance 記錄
+    const { data: deleted, error } = await supabase
+      .from('attendance')
+      .delete()
+      .eq('course_id', selectedCourse.id)
+      .eq('date', newHolidayDate)
+      .eq('status', '待上課')
+      .select('id')
+    if (deleted && deleted.length > 0) {
+      console.log(`[停課] 已自動刪除 ${deleted.length} 筆待上課記錄 (${newHolidayDate})`)
+    }
+
     setNewHolidayDate('')
     setNewHolidayReason('')
     fetchCourseHolidays(selectedCourse.id)

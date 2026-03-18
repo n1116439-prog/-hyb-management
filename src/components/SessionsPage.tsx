@@ -91,6 +91,7 @@ export function SessionsPage({ courses, userRole, waitlists, userCategory }: Ses
       const studentCreds = credits?.filter((c: any) => c.student_id === s.id) || []
       const studentEnrollments = enrollments?.filter((e: any) => e.student_id === s.id) || []
       const studentAttendance = allAttendance?.filter((a: any) => a.student_id === s.id) || []
+      console.log('[SessionsPage] 學員', s.name, 'studentAttendance 資料筆數:', studentAttendance.length, studentAttendance)
 
       return {
         id: s.id,
@@ -124,6 +125,7 @@ export function SessionsPage({ courses, userRole, waitlists, userCategory }: Ses
           const courseAttendance = studentAttendance
             .filter((a: any) => a.course_id === courseId)
             .sort((a: any, b: any) => (a.date || '').localeCompare(b.date || ''))
+          console.log('[SessionsPage] 課程日程渲染 - 課程', e.courses?.name, 'courseAttendance:', courseAttendance.length, '筆', courseAttendance)
 
           // 去重（同日期只取一筆）
           const seen = new Set<string>()
