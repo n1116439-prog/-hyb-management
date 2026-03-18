@@ -24,15 +24,14 @@ export async function generateAttendanceRecords(
 }
 
 /**
- * 根據合約 (venue_contracts) 產生課程日期列表。
+ * 根據合約 (venue_contracts) 或 fallback 產生課程日期列表。
  */
 export async function generateCourseDatesFromContract(
   courseId: string,
 ): Promise<{ dates: string[]; contractStart: string; contractEnd: string } | null> {
-  // 取課程資訊
   const { data: course } = await supabase
     .from('courses')
-    .select('day_of_week')
+    .select('day_of_week, venue_id')
     .eq('id', courseId)
     .single()
   if (!course) return null
@@ -40,44 +39,68 @@ export async function generateCourseDatesFromContract(
   const targetDay = weekdayMap[course.day_of_week]
   if (targetDay === undefined) return null
 
-  // 取合約
-  const { data: contracts } = await supabase
-    .from('venue_contracts')
-    .select('start_date, end_date')
-    .eq('course_id', courseId)
-    .order('start_date', { ascending: true })
+  let rangeStart!: Date
+  let rangeEnd!: Date
+  let fromContract = false
 
-  if (!contracts || contracts.length === 0) return null
+  // 優先從合約取日期範圍
+  if (course.venue_id) {
+    const { data: contracts } = await supabase
+      .from('venue_contracts')
+      .select('start_date, end_date')
+      .eq('venue_id', course.venue_id)
+      .order('end_date', { ascending: false })
+      .limit(1)
 
-  const contractStart = contracts[0].start_date
-  const contractEnd = contracts[contracts.length - 1].end_date
+    if (contracts && contracts.length > 0) {
+      rangeStart = new Date(contracts[0].start_date + 'T00:00:00')
+      rangeEnd = new Date(contracts[0].end_date + 'T00:00:00')
+      fromContract = true
+    }
+  }
 
-  // 取停課日
-  const { data: holidays } = await supabase
-    .from('course_holidays')
-    .select('date')
-    .eq('course_id', courseId)
-  const holidayDates = new Set((holidays || []).map((h: { date: string }) => h.date))
+  // fallback：從 attendance 推算
+  if (!fromContract) {
+    const { data: existingAtt } = await supabase
+      .from('attendance')
+      .select('date')
+      .eq('course_id', courseId)
+      .order('date', { ascending: true })
 
-  // 產生日期
+    const existingDates = (existingAtt || []).map(a => a.date).sort()
+
+    if (existingDates.length > 0) {
+      rangeStart = new Date(existingDates[0] + 'T00:00:00')
+      const lastDate = new Date(existingDates[existingDates.length - 1] + 'T00:00:00')
+      rangeEnd = new Date(lastDate)
+      rangeEnd.setDate(rangeEnd.getDate() + 12 * 7)
+    } else {
+      rangeStart = new Date()
+      rangeStart.setHours(0, 0, 0, 0)
+      while (rangeStart.getDay() !== targetDay) {
+        rangeStart.setDate(rangeStart.getDate() + 1)
+      }
+      rangeEnd = new Date(rangeStart)
+      rangeEnd.setDate(rangeEnd.getDate() + 24 * 7)
+    }
+  }
+
+  // 生成每週日期
   const dates: string[] = []
-  const start = new Date(contractStart + 'T00:00:00')
-  const end = new Date(contractEnd + 'T00:00:00')
-
-  const current = new Date(start)
+  const current = new Date(rangeStart)
   while (current.getDay() !== targetDay) {
     current.setDate(current.getDate() + 1)
   }
-
-  while (current <= end) {
-    const dateStr = formatLocalDate(current)
-    if (!holidayDates.has(dateStr)) {
-      dates.push(dateStr)
-    }
+  while (current <= rangeEnd) {
+    dates.push(formatLocalDate(current))
     current.setDate(current.getDate() + 7)
   }
 
-  return { dates, contractStart, contractEnd }
+  return {
+    dates,
+    contractStart: formatLocalDate(rangeStart),
+    contractEnd: formatLocalDate(rangeEnd),
+  }
 }
 
 /**
