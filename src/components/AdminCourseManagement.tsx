@@ -819,7 +819,7 @@ const CourseCoachesTab: React.FC<{
 };
 
 // ============================================================
-// Tab Component: 點名紀錄（從 attendance 表讀取真實資料）
+// Tab Component: 點名紀錄（從合約日期 + 已報名學員生成）
 // ============================================================
 const CourseAttendanceTab: React.FC<{
   courseId: string;
@@ -830,67 +830,118 @@ const CourseAttendanceTab: React.FC<{
   const [attendanceRecords, setAttendanceRecords] = useState<any[]>([]);
   const [savingId, setSavingId] = useState<string | null>(null);
 
-  // 取得這個課程有哪些日期（從 attendance 表）
+  // 取得可選日期：從合約生成，過濾掉停課日
   const fetchDates = useCallback(async () => {
     setLoading(true);
-    const { data } = await supabase
+
+    // 1. 從合約生成所有日期
+    const result = await generateCourseDatesFromContract(courseId);
+    const contractDates = result?.dates || [];
+
+    // 2. 從 attendance 取額外存在的日期（手動新增的）
+    const { data: attData } = await supabase
       .from('attendance')
       .select('date')
-      .eq('course_id', courseId)
-      .order('date', { ascending: false });
+      .eq('course_id', courseId);
+    const attDates = [...new Set((attData || []).map(a => a.date))];
 
-    const uniqueDates = [...new Set((data || []).map(a => a.date))];
-    setDates(uniqueDates);
+    // 3. 取停課日
+    const { data: holidayData } = await supabase
+      .from('course_holidays')
+      .select('date')
+      .eq('course_id', courseId);
+    const holidaySet = new Set((holidayData || []).map(h => h.date));
 
-    // 預設選第一個日期（最近的）
-    if (uniqueDates.length > 0 && !selectedDate) {
-      setSelectedDate(uniqueDates[0]);
+    // 4. 合併並過濾停課日，按日期降序排列（最近的在前）
+    const allDateSet = new Set([...contractDates, ...attDates]);
+    const availableDates = Array.from(allDateSet)
+      .filter(d => !holidaySet.has(d))
+      .sort((a, b) => b.localeCompare(a));
+
+    setDates(availableDates);
+
+    if (availableDates.length > 0 && !selectedDate) {
+      // 預設選最近的日期
+      const todayStr = formatLocalDate(new Date());
+      const todayOrPast = availableDates.find(d => d <= todayStr);
+      setSelectedDate(todayOrPast || availableDates[0]);
     }
     setLoading(false);
   }, [courseId]);
 
-  // 取得選中日期的所有學員出席紀錄
+  // 取得選中日期的所有已報名學員 + 已有的 attendance 紀錄
   const fetchAttendanceForDate = useCallback(async () => {
     if (!selectedDate) { setAttendanceRecords([]); return; }
 
-    const { data } = await supabase
+    // 1. 查已報名學員
+    const { data: enrollments } = await supabase
+      .from('enrollments')
+      .select('student_id, students(id, name, student_code)')
+      .eq('course_id', courseId)
+      .eq('status', '已報名');
+
+    // 2. 查該日已有的 attendance
+    const { data: existingAtt } = await supabase
       .from('attendance')
       .select('id, student_id, status, deducted, students(name, student_code)')
       .eq('course_id', courseId)
-      .eq('date', selectedDate)
-      .order('created_at');
+      .eq('date', selectedDate);
 
-    setAttendanceRecords(data || []);
+    const existingMap = new Map((existingAtt || []).map(a => [a.student_id, a]));
+
+    // 3. 合併：已有紀錄的用紀錄，沒有的顯示為未點名
+    const todayStr = formatLocalDate(new Date());
+    const isPast = selectedDate <= todayStr;
+
+    const records = (enrollments || []).map((e: any) => {
+      const existing = existingMap.get(e.student_id);
+      if (existing) return existing;
+      return {
+        id: null,
+        student_id: e.student_id,
+        status: isPast ? '未記錄' : '待上課',
+        deducted: false,
+        students: e.students,
+        _isNew: true,
+      };
+    });
+
+    setAttendanceRecords(records);
   }, [courseId, selectedDate]);
 
   useEffect(() => { fetchDates(); }, [fetchDates]);
   useEffect(() => { fetchAttendanceForDate(); }, [fetchAttendanceForDate]);
 
-  const handleStatusChange = async (attendanceId: string, newStatus: string) => {
-    setSavingId(attendanceId);
+  const handleStatusChange = async (record: any, newStatus: string) => {
+    const recordKey = record.id || record.student_id;
+    setSavingId(recordKey);
 
-    const record = attendanceRecords.find(r => r.id === attendanceId);
-    const oldStatus = record?.status;
+    const oldStatus = record.status;
+    const deducted = newStatus === '出席';
 
-    // 更新 attendance 狀態
-    const updateData: any = { status: newStatus };
+    if (record.id && !record._isNew) {
+      // 已有紀錄：更新
+      const updateData: any = { status: newStatus };
+      if (newStatus === '出席' && oldStatus !== '出席') updateData.deducted = true;
+      if (oldStatus === '出席' && newStatus !== '出席') updateData.deducted = false;
 
-    // 如果標記為「出席」且原本不是出席，則標記 deducted = true
-    if (newStatus === '出席' && oldStatus !== '出席') {
-      updateData.deducted = true;
-    }
-    // 如果從「出席」改為其他狀態，取消 deducted
-    if (oldStatus === '出席' && newStatus !== '出席') {
-      updateData.deducted = false;
-    }
+      const { error } = await supabase
+        .from('attendance')
+        .update(updateData)
+        .eq('id', record.id);
 
-    const { error } = await supabase
-      .from('attendance')
-      .update(updateData)
-      .eq('id', attendanceId);
+      if (error) alert('更新失敗：' + error.message);
+    } else {
+      // 新紀錄：insert
+      const { error } = await supabase.from('attendance').insert({
+        student_id: record.student_id,
+        course_id: courseId,
+        date: selectedDate,
+        status: newStatus,
+        deducted,
+      });
 
-    if (error) {
-      alert('更新失敗：' + error.message);
+      if (error) alert('新增失敗：' + error.message);
     }
 
     await fetchAttendanceForDate();
@@ -899,14 +950,24 @@ const CourseAttendanceTab: React.FC<{
 
   const handleMarkAllPresent = async () => {
     if (!selectedDate) return;
-    if (!confirm(`確定要將 ${selectedDate} 所有學員標記為「出席」嗎？`)) return;
+    if (!confirm(`確定要將 ${selectedDate} 所有尚未點名的學員標記為「出席」嗎？`)) return;
 
-    const pendingRecords = attendanceRecords.filter(r => r.status === '待上課');
-    for (const record of pendingRecords) {
-      await supabase
-        .from('attendance')
-        .update({ status: '出席', deducted: true })
-        .eq('id', record.id);
+    const unmarked = attendanceRecords.filter(r => r._isNew || r.status === '待上課' || r.status === '未記錄');
+
+    for (const record of unmarked) {
+      if (record.id && !record._isNew) {
+        await supabase.from('attendance')
+          .update({ status: '出席', deducted: true })
+          .eq('id', record.id);
+      } else {
+        await supabase.from('attendance').insert({
+          student_id: record.student_id,
+          course_id: courseId,
+          date: selectedDate,
+          status: '出席',
+          deducted: true,
+        });
+      }
     }
 
     await fetchAttendanceForDate();
@@ -914,11 +975,13 @@ const CourseAttendanceTab: React.FC<{
 
   const statusConfig: Record<string, { label: string; color: string }> = {
     '待上課': { label: '待上課', color: 'bg-neutral-100 text-neutral-600' },
+    '未記錄': { label: '未記錄', color: 'bg-neutral-50 text-neutral-400 border border-dashed border-neutral-300' },
     '出席': { label: '出席', color: 'bg-green-100 text-green-700' },
     '缺席': { label: '缺席', color: 'bg-red-100 text-red-700' },
     '請假': { label: '請假', color: 'bg-yellow-100 text-yellow-700' },
     '補課': { label: '補課', color: 'bg-purple-100 text-purple-700' },
     '遲到': { label: '遲到', color: 'bg-orange-100 text-orange-700' },
+    '病假': { label: '病假', color: 'bg-blue-100 text-blue-700' },
   };
 
   if (loading) {
@@ -929,6 +992,9 @@ const CourseAttendanceTab: React.FC<{
     );
   }
 
+  const todayStr = formatLocalDate(new Date());
+  const unmarkedCount = attendanceRecords.filter(r => r._isNew || r.status === '待上課' || r.status === '未記錄').length;
+
   return (
     <div className="space-y-6">
       {/* Header: date selector + bulk action */}
@@ -937,7 +1003,7 @@ const CourseAttendanceTab: React.FC<{
           <h3 className="text-lg font-bold text-neutral-900">點名紀錄</h3>
           <button
             onClick={handleMarkAllPresent}
-            disabled={!selectedDate || attendanceRecords.filter(r => r.status === '待上課').length === 0}
+            disabled={!selectedDate || unmarkedCount === 0}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border border-green-200 text-green-600 hover:bg-green-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             <Check size={14} />
@@ -955,8 +1021,11 @@ const CourseAttendanceTab: React.FC<{
             {dates.map(date => {
               const d = new Date(date + 'T00:00:00');
               const dayName = DAY_NAMES[d.getDay()];
+              const isPast = date < todayStr;
+              const isToday = date === todayStr;
+              const tag = isToday ? ' ← 今天' : isPast ? ' (已結束)' : ' (待上課)';
               return (
-                <option key={date} value={date}>{date} ({dayName})</option>
+                <option key={date} value={date}>{date} ({dayName}){tag}</option>
               );
             })}
           </select>
@@ -976,7 +1045,7 @@ const CourseAttendanceTab: React.FC<{
             請假 {attendanceRecords.filter(r => r.status === '請假').length}
           </div>
           <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-neutral-100 text-neutral-600 text-xs font-bold">
-            待上課 {attendanceRecords.filter(r => r.status === '待上課').length}
+            未點名 {unmarkedCount}
           </div>
         </div>
       )}
@@ -997,10 +1066,11 @@ const CourseAttendanceTab: React.FC<{
                 const student = record.students as any;
                 const status = record.status || '待上課';
                 const sc = statusConfig[status] || statusConfig['待上課'];
-                const isSaving = savingId === record.id;
+                const recordKey = record.id || record.student_id;
+                const isSaving = savingId === recordKey;
 
                 return (
-                  <tr key={record.id} className="hover:bg-white/50 transition-colors">
+                  <tr key={recordKey} className="hover:bg-white/50 transition-colors">
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-3">
                         <div className="w-8 h-8 rounded-full bg-white flex items-center justify-center font-bold text-primary text-xs shadow-sm">
@@ -1032,10 +1102,11 @@ const CourseAttendanceTab: React.FC<{
                             { id: '缺席', label: '缺', hoverColor: 'hover:bg-red-500 hover:text-white' },
                             { id: '請假', label: '假', hoverColor: 'hover:bg-amber-500 hover:text-white' },
                             { id: '遲到', label: '遲', hoverColor: 'hover:bg-orange-500 hover:text-white' },
+                            { id: '病假', label: '病', hoverColor: 'hover:bg-blue-500 hover:text-white' },
                           ].map(btn => (
                             <button
                               key={btn.id}
-                              onClick={() => handleStatusChange(record.id, btn.id)}
+                              onClick={() => handleStatusChange(record, btn.id)}
                               className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold transition-all border ${
                                 status === btn.id
                                   ? 'bg-primary text-white border-primary'
@@ -1057,7 +1128,7 @@ const CourseAttendanceTab: React.FC<{
           {attendanceRecords.length === 0 && (
             <div className="py-12 text-center">
               <UserCheck className="mx-auto mb-3 text-neutral-300" size={32} />
-              <p className="text-sm text-neutral-500">此日期尚無出席記錄</p>
+              <p className="text-sm text-neutral-500">此日期尚無已報名學員</p>
             </div>
           )}
         </div>
