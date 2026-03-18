@@ -170,18 +170,29 @@ export const AdminStudentManagement: React.FC<{
     setStudentCreditsDetail(credits || [])
   }
 
-  const fetchCourseAttendance = async (studentId: string, enrollments: any[]) => {
+  const fetchCourseAttendance = async (studentId: string) => {
+    // 直接從 DB 查，不依賴 state
+    const { data: enrollments } = await supabase
+      .from('enrollments')
+      .select('course_id, status')
+      .eq('student_id', studentId)
+      .eq('status', '已報名')
+
+    if (!enrollments || enrollments.length === 0) {
+      setCourseAttendanceMap({})
+      return
+    }
+
     const map: Record<string, any[]> = {}
-    const activeEnrollments = enrollments.filter((e: any) => e.status === '已報名')
-    for (const enrollment of activeEnrollments) {
-      const courseId = enrollment.course_id
+    for (const enrollment of enrollments) {
       const { data } = await supabase
         .from('attendance')
         .select('*')
         .eq('student_id', studentId)
-        .eq('course_id', courseId)
+        .eq('course_id', enrollment.course_id)
         .order('date')
-      map[courseId] = data || []
+      console.log('課程', enrollment.course_id, 'attendance:', data)
+      map[enrollment.course_id] = data || []
     }
     setCourseAttendanceMap(map)
   }
@@ -277,7 +288,7 @@ export const AdminStudentManagement: React.FC<{
     setSelectedNewDates([])
     setAvailableDates([])
     // Refresh data
-    await fetchCourseAttendance(studentId, studentEnrollments)
+    await fetchCourseAttendance(studentId)
     fetchStudentAttendance(studentId)
   }
 
@@ -288,7 +299,7 @@ export const AdminStudentManagement: React.FC<{
       alert('刪除失敗：' + error.message)
       return
     }
-    await fetchCourseAttendance(studentId, studentEnrollments)
+    await fetchCourseAttendance(studentId)
     fetchStudentAttendance(studentId)
   }
 
@@ -800,7 +811,7 @@ export const AdminStudentManagement: React.FC<{
                       onClick={() => {
                         setDetailTab('dates')
                         if (Object.keys(courseAttendanceMap).length === 0) {
-                          fetchCourseAttendance(selectedStudent.id, studentEnrollments)
+                          fetchCourseAttendance(selectedStudent.id)
                           fetchHolidays()
                         }
                       }}
