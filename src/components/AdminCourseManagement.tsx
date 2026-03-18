@@ -119,9 +119,10 @@ const CourseDatesTab: React.FC<{
 
     if (isCurrentlyHoliday) {
       // 取消停課 → 刪除 holiday + 批次建立 attendance
-      await supabase.from('course_holidays').delete()
+      const { error: delErr } = await supabase.from('course_holidays').delete()
         .eq('course_id', courseId)
         .eq('date', date);
+      if (delErr) { alert('取消停課失敗：' + delErr.message); setProcessingDate(null); return; }
 
       const created = await batchCreateAttendanceForDate(courseId, date);
 
@@ -138,10 +139,11 @@ const CourseDatesTab: React.FC<{
       });
     } else {
       // 設定停課 → 新增 holiday + 批次刪除待上課 attendance
-      await supabase.from('course_holidays').insert({
+      const { error: insErr } = await supabase.from('course_holidays').insert({
         course_id: courseId,
         date,
       });
+      if (insErr) { alert('設定停課失敗：' + insErr.message); setProcessingDate(null); return; }
 
       const deleted = await batchDeletePendingAttendanceForDate(courseId, date);
 
@@ -479,10 +481,12 @@ const CourseStudentsTab: React.FC<{
     const studentName = (enrollment.students as any)?.name || '學員';
     if (!confirm(`確定要將「${studentName}」退出「${courseName}」嗎？\n堂數不會扣除，但待上課日期會被刪除。`)) return;
 
-    await supabase.from('enrollments').update({
+    const { error } = await supabase.from('enrollments').update({
       status: '已退出',
       withdrawn_at: new Date().toISOString(),
     }).eq('id', enrollment.id);
+
+    if (error) { alert('退出失敗：' + error.message); return; }
 
     await supabase.from('attendance').delete()
       .eq('student_id', enrollment.student_id)
@@ -973,22 +977,27 @@ const CourseAttendanceTab: React.FC<{
     if (!confirm(`確定要將 ${selectedDate} 所有尚未點名的學員標記為「出席」嗎？`)) return;
 
     const unmarked = attendanceRecords.filter(r => r._isNew || r.status === '待上課' || r.status === '未記錄');
+    let failCount = 0;
 
     for (const record of unmarked) {
       if (record.id && !record._isNew) {
-        await supabase.from('attendance')
+        const { error } = await supabase.from('attendance')
           .update({ status: '出席', deducted: true })
           .eq('id', record.id);
+        if (error) failCount++;
       } else {
-        await supabase.from('attendance').insert({
+        const { error } = await supabase.from('attendance').insert({
           student_id: record.student_id,
           course_id: courseId,
           date: selectedDate,
           status: '出席',
           deducted: true,
         });
+        if (error) failCount++;
       }
     }
+
+    if (failCount > 0) alert(`有 ${failCount} 筆標記失敗，請重新整理確認`);
 
     await fetchAttendanceForDate();
   };
@@ -1454,7 +1463,8 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
       const enrollments = addedStudents.map(s => ({
         student_id: s.id, course_id: courseData.id, status: '已報名',
       }));
-      await supabase.from('enrollments').insert(enrollments);
+      const { error: enrollErr } = await supabase.from('enrollments').insert(enrollments);
+      if (enrollErr) console.error('批次報名失敗:', enrollErr.message);
 
       for (const s of addedStudents) {
         await generateAttendanceRecords(s.id, courseData.id);
@@ -1550,17 +1560,19 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
 
     if (withdrawn) {
       // 重新報名：更新已退出的紀錄
-      await supabase.from('enrollments').update({
+      const { error } = await supabase.from('enrollments').update({
         status: '已報名',
         withdrawn_at: null,
       }).eq('id', withdrawn.id);
+      if (error) { alert('重新報名失敗：' + error.message); return; }
     } else {
       // 完全沒有紀錄：新增
-      await supabase.from('enrollments').insert({
+      const { error } = await supabase.from('enrollments').insert({
         student_id: student.id,
         course_id: selectedCourse.id,
         status: '已報名',
       });
+      if (error) { alert('報名失敗：' + error.message); return; }
     }
 
     await generateAttendanceRecords(student.id, selectedCourse.id);
