@@ -81,23 +81,83 @@ export async function generateCourseDatesFromContract(
 }
 
 /**
- * 已停用：不再預建 attendance 紀錄。
- * 保留函式簽名以維持相容性，回傳 0。
+ * 為指定課程+日期，批次建立所有已報名學員的 attendance 紀錄。
+ * 已存在紀錄的學員會跳過。
  */
 export async function batchCreateAttendanceForDate(
-  _courseId: string,
-  _date: string,
+  courseId: string,
+  date: string,
+  status: string = '出席',
 ): Promise<number> {
-  return 0
+  // 1. 查所有已報名的 student_id
+  const { data: enrollments } = await supabase
+    .from('enrollments')
+    .select('student_id')
+    .eq('course_id', courseId)
+    .eq('status', '已報名')
+  if (!enrollments || enrollments.length === 0) return 0
+
+  // 2. 查該日期已存在的 student_id
+  const { data: existing } = await supabase
+    .from('attendance')
+    .select('student_id')
+    .eq('course_id', courseId)
+    .eq('date', date)
+  const existingSet = new Set((existing || []).map(a => a.student_id))
+
+  // 3. 過濾掉已存在的
+  const inserts = enrollments
+    .filter(e => !existingSet.has(e.student_id))
+    .map(e => ({
+      student_id: e.student_id,
+      course_id: courseId,
+      date,
+      status,
+      deducted: status === '出席',
+    }))
+
+  if (inserts.length === 0) return 0
+
+  // 4. 批次 insert
+  const { error } = await supabase.from('attendance').insert(inserts)
+  if (error) {
+    console.error('[attendanceUtils] batchCreateAttendanceForDate 失敗:', error)
+    return 0
+  }
+
+  return inserts.length
 }
 
 /**
- * 已停用：不再預建 attendance 紀錄。
- * 保留函式簽名以維持相容性，回傳 0。
+ * 刪除指定課程+日期中 status='待上課' 的 attendance 紀錄。
  */
 export async function batchDeletePendingAttendanceForDate(
-  _courseId: string,
-  _date: string,
+  courseId: string,
+  date: string,
 ): Promise<number> {
-  return 0
+  // 1. 查詢待刪除的紀錄數量
+  const { data: pending } = await supabase
+    .from('attendance')
+    .select('id')
+    .eq('course_id', courseId)
+    .eq('date', date)
+    .eq('status', '待上課')
+
+  const count = pending?.length || 0
+  if (count === 0) return 0
+
+  // 2. 刪除
+  const { error } = await supabase
+    .from('attendance')
+    .delete()
+    .eq('course_id', courseId)
+    .eq('date', date)
+    .eq('status', '待上課')
+
+  if (error) {
+    console.error('[attendanceUtils] batchDeletePendingAttendanceForDate 失敗:', error)
+    return 0
+  }
+
+  return count
 }
