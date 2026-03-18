@@ -936,25 +936,61 @@ const CourseAttendanceTab: React.FC<{
   useEffect(() => { fetchDates(); }, [fetchDates]);
   useEffect(() => { fetchAttendanceForDate(); }, [fetchAttendanceForDate]);
 
+  const getDeducted = (status: string): boolean => {
+    return ['出席', '缺席', '遲到'].includes(status);
+  };
+
+  const syncCredits = async (studentId: string) => {
+    const { data: attCount } = await supabase
+      .from('attendance')
+      .select('id')
+      .eq('student_id', studentId)
+      .eq('course_id', courseId)
+      .eq('deducted', true);
+
+    const newUsed = attCount?.length || 0;
+
+    // 先嘗試更新對應 course_id 的 credit
+    const { data: courseCred } = await supabase
+      .from('credits')
+      .select('id')
+      .eq('student_id', studentId)
+      .eq('course_id', courseId)
+      .eq('status', 'active')
+      .limit(1);
+
+    if (courseCred && courseCred.length > 0) {
+      await supabase.from('credits').update({ used_credits: newUsed }).eq('id', courseCred[0].id);
+    } else {
+      // fallback: 通用 credit（course_id IS NULL）
+      const { data: generalCred } = await supabase
+        .from('credits')
+        .select('id')
+        .eq('student_id', studentId)
+        .is('course_id', null)
+        .eq('status', 'active')
+        .limit(1);
+
+      if (generalCred && generalCred.length > 0) {
+        await supabase.from('credits').update({ used_credits: newUsed }).eq('id', generalCred[0].id);
+      }
+    }
+  };
+
   const handleStatusChange = async (record: any, newStatus: string) => {
     const recordKey = record.id || record.student_id;
     setSavingId(recordKey);
 
-    const oldStatus = record.status;
-    const deducted = newStatus === '出席';
+    const deducted = getDeducted(newStatus);
 
     if (record.id && !record._isNew) {
       // 已有紀錄：更新
-      const updateData: any = { status: newStatus };
-      if (newStatus === '出席' && oldStatus !== '出席') updateData.deducted = true;
-      if (oldStatus === '出席' && newStatus !== '出席') updateData.deducted = false;
-
       const { error } = await supabase
         .from('attendance')
-        .update(updateData)
+        .update({ status: newStatus, deducted })
         .eq('id', record.id);
 
-      if (error) alert('更新失敗：' + error.message);
+      if (error) { alert('更新失敗：' + error.message); setSavingId(null); return; }
     } else {
       // 新紀錄：insert
       const { error } = await supabase.from('attendance').insert({
@@ -965,8 +1001,11 @@ const CourseAttendanceTab: React.FC<{
         deducted,
       });
 
-      if (error) alert('新增失敗：' + error.message);
+      if (error) { alert('新增失敗：' + error.message); setSavingId(null); return; }
     }
+
+    // 同步更新 credits
+    await syncCredits(record.student_id);
 
     await fetchAttendanceForDate();
     setSavingId(null);
@@ -998,6 +1037,12 @@ const CourseAttendanceTab: React.FC<{
     }
 
     if (failCount > 0) alert(`有 ${failCount} 筆標記失敗，請重新整理確認`);
+
+    // 同步所有學員的 credits
+    const studentIds = [...new Set(unmarked.map(r => r.student_id))];
+    for (const sid of studentIds) {
+      await syncCredits(sid);
+    }
 
     await fetchAttendanceForDate();
   };
