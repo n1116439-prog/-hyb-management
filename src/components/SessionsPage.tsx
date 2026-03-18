@@ -85,28 +85,6 @@ export function SessionsPage({ courses, userRole, waitlists, userCategory }: Ses
     const { data: holidays } = await supabase.from('course_holidays').select('*')
     setCourseHolidays(holidays || [])
 
-    // 讀取合約資訊（用於計算日期範圍）
-    const courseIds = [...new Set((enrollments || []).map((e: any) => e.course_id))]
-    const venueIds = [...new Set((enrollments || []).map((e: any) => e.courses?.venue_id).filter(Boolean))]
-    let contractsMap: Record<string, { start_date: string; end_date: string }> = {}
-
-    if (venueIds.length > 0) {
-      const { data: contracts } = await supabase
-        .from('venue_contracts')
-        .select('venue_id, start_date, end_date')
-        .in('venue_id', venueIds)
-        .order('end_date', { ascending: false })
-
-      if (contracts) {
-        // 每個 venue 取最新合約
-        for (const c of contracts) {
-          if (!contractsMap[c.venue_id]) {
-            contractsMap[c.venue_id] = { start_date: c.start_date, end_date: c.end_date }
-          }
-        }
-      }
-    }
-
     setStudentCredits(studentList.map((s: any) => {
       const studentCreds = credits?.filter((c: any) => c.student_id === s.id) || []
       const studentEnrollments = enrollments?.filter((e: any) => e.student_id === s.id) || []
@@ -139,97 +117,109 @@ export function SessionsPage({ courses, userRole, waitlists, userCategory }: Ses
             nextClassDate = `${next.getMonth()+1}/${next.getDate()}`
           }
 
-          // 從 attendance 表讀取課程日程
+          // ===== 完整日程生成邏輯 =====
           const courseId = e.course_id
           const courseAttendance = studentAttendance
             .filter((a: any) => a.course_id === courseId)
             .sort((a: any, b: any) => (a.date || '').localeCompare(b.date || ''))
 
-          // 去重（同日期只取一筆）
           const seen = new Set<string>()
           const uniqueAttendance = courseAttendance.filter((a: any) => {
             if (seen.has(a.date)) return false
             seen.add(a.date)
             return true
           })
-
-          let sessionCount = 0
-          const scheduleEntries: { date: string; type: 'holiday' | 'class' | 'notice'; session: number | null; status: string; deducted: boolean }[] = uniqueAttendance.map((att: any) => {
-            const isLeave = ['請假', '病假'].includes(att.status)
-            if (!isLeave) sessionCount++
-            return {
-              date: att.date as string,
-              type: 'class' as const,
-              session: isLeave ? null : sessionCount,
-              status: att.status as string,
-              deducted: (att.deducted || false) as boolean,
-            }
-          })
-
-          // ===== 修正：停課日顯示邏輯 =====
-          // 不再只看 attendance 的最早/最晚日期範圍
-          // 改為用合約期間 + 今天日期 + expiry_date 的完整範圍
-          const courseHolidayRecords = (holidays || [])
-            .filter((h: any) => h.course_id === courseId)
-            .filter((h: any) => {
-              // 確保停課日的星期幾跟課程的 day_of_week 一致
-              if (targetDay === undefined) return true
-              const hDay = new Date(h.date + 'T00:00:00').getDay()
-              return hDay === targetDay
-            })
-
-          // 計算合理的日期範圍
-          let rangeStart = ''
-          let rangeEnd = ''
-
-          // 從合約取得範圍
-          const venueId = e.courses?.venue_id
-          if (venueId && contractsMap[venueId]) {
-            rangeStart = contractsMap[venueId].start_date
-            rangeEnd = contractsMap[venueId].end_date
+          const attendanceMap: Record<string, any> = {}
+          for (const att of uniqueAttendance) {
+            attendanceMap[att.date] = att
           }
 
-          // 也考慮 attendance 中的日期範圍
+          // 停課日（course_id 匹配 + NULL 全域停課）
+          const holidayMap: Record<string, string> = {}
+          ;(holidays || [])
+            .filter((h: any) => h.course_id === courseId || h.course_id === null)
+            .forEach((h: any) => {
+              holidayMap[h.date] = h.reason || '停課'
+            })
+
+          // 找到該學員在這門課的 credit
+          const courseCred = studentCreds.find((c: any) => c.course_id === courseId)
+          const generalCred = studentCreds.find((c: any) => !c.course_id)
+          const selectedCred = courseCred || generalCred
+          const totalCreditsForCourse = selectedCred?.total_credits || 0
+
+          // 起始日期：優先 attendance 最早日期 → enrolled_at → 今天
+          let startDate: Date
+          const enrolledAt = e.enrolled_at ? new Date(e.enrolled_at + (e.enrolled_at.includes('T') ? '' : 'T00:00:00')) : null
+
           if (uniqueAttendance.length > 0) {
-            const firstAttDate = uniqueAttendance[0].date
-            const lastAttDate = uniqueAttendance[uniqueAttendance.length - 1].date
-            if (!rangeStart || firstAttDate < rangeStart) rangeStart = firstAttDate
-            if (!rangeEnd || lastAttDate > rangeEnd) rangeEnd = lastAttDate
+            startDate = new Date(uniqueAttendance[0].date + 'T00:00:00')
+          } else if (enrolledAt) {
+            startDate = new Date(enrolledAt)
+          } else {
+            startDate = new Date()
+          }
+          startDate.setHours(0, 0, 0, 0)
+
+          if (targetDay !== undefined) {
+            while (startDate.getDay() !== targetDay) {
+              startDate.setDate(startDate.getDate() + 1)
+            }
           }
 
-          // 也考慮 expiry_date
-          const studentExpiry = studentCreds.length > 0
-            ? studentCreds.sort((a: any, b: any) => (b.expiry_date || '').localeCompare(a.expiry_date || ''))[0]?.expiry_date || ''
-            : ''
-          if (studentExpiry && (!rangeEnd || studentExpiry > rangeEnd)) {
-            rangeEnd = studentExpiry
+          // 生成完整日程：每週一個日期，停課跳過不算堂
+          const scheduleEntries: { date: string; type: 'holiday' | 'class' | 'notice'; session: number | null; status: string; deducted: boolean }[] = []
+          let sessionCount = 0
+          const current = new Date(startDate)
+          const maxWeeks = totalCreditsForCourse > 0 ? totalCreditsForCourse * 3 : 52
+          let weekCount = 0
+          const todayStr = formatLocalDate(new Date())
+
+          while (sessionCount < totalCreditsForCourse && weekCount < maxWeeks) {
+            const dateStr = formatLocalDate(current)
+            weekCount++
+
+            if (holidayMap[dateStr]) {
+              scheduleEntries.push({
+                date: dateStr,
+                type: 'holiday',
+                session: null,
+                status: holidayMap[dateStr],
+                deducted: false,
+              })
+            } else {
+              const att = attendanceMap[dateStr]
+              const isLeave = att ? ['請假', '病假'].includes(att.status) : false
+              if (!isLeave) sessionCount++
+
+              if (att) {
+                scheduleEntries.push({
+                  date: dateStr,
+                  type: 'class',
+                  session: isLeave ? null : sessionCount,
+                  status: att.status,
+                  deducted: att.deducted || false,
+                })
+              } else if (dateStr <= todayStr) {
+                scheduleEntries.push({
+                  date: dateStr,
+                  type: 'class',
+                  session: sessionCount,
+                  status: '未記錄',
+                  deducted: false,
+                })
+              } else {
+                scheduleEntries.push({
+                  date: dateStr,
+                  type: 'class',
+                  session: sessionCount,
+                  status: '待上課',
+                  deducted: false,
+                })
+              }
+            }
+            current.setDate(current.getDate() + 7)
           }
-
-          // fallback：如果都沒有，用今天 +6 個月
-          if (!rangeStart) rangeStart = formatLocalDate(new Date())
-          if (!rangeEnd) {
-            const sixMonthsLater = new Date()
-            sixMonthsLater.setMonth(sixMonthsLater.getMonth() + 6)
-            rangeEnd = formatLocalDate(sixMonthsLater)
-          }
-
-          // 過濾停課日在範圍內，且不在 attendance 已有的日期中
-          const filteredHolidays = courseHolidayRecords.filter((h: any) =>
-            h.date >= rangeStart && h.date <= rangeEnd && !seen.has(h.date)
-          )
-
-          for (const h of filteredHolidays) {
-            scheduleEntries.push({
-              date: h.date,
-              type: 'holiday' as const,
-              session: null,
-              status: h.reason || '停課',
-              deducted: false,
-            })
-          }
-
-          // 重新按日期排序
-          scheduleEntries.sort((a, b) => (a.date || '').localeCompare(b.date || ''))
 
           return {
             id: e.id,
