@@ -133,6 +133,7 @@ export const AdminStudentManagement: React.FC<{
   const [availableDates, setAvailableDates] = useState<string[]>([])
   const [selectedNewDates, setSelectedNewDates] = useState<string[]>([])
   const [loadingDates, setLoadingDates] = useState(false)
+  const [activityLogs, setActivityLogs] = useState<any[]>([])
 
   const fetchStudentAttendance = async (studentId: string) => {
     const { data } = await supabase
@@ -150,6 +151,26 @@ export const AdminStudentManagement: React.FC<{
       courseTime: (a.courses as any)?.time || '',
       location: (a.courses as any)?.venues?.name || '',
     })))
+  }
+
+  const fetchActivityLogs = async (studentId: string) => {
+    const { data } = await supabase
+      .from('student_activity_logs')
+      .select('*')
+      .eq('student_id', studentId)
+      .order('created_at', { ascending: false })
+      .limit(50)
+    setActivityLogs(data || [])
+  }
+
+  const logStudentActivity = async (studentId: string, action: string, details: Record<string, any>) => {
+    const { data: { user } } = await supabase.auth.getUser()
+    await supabase.from('student_activity_logs').insert({
+      student_id: studentId,
+      action,
+      details,
+      changed_by: user?.id || null,
+    })
   }
 
   const fetchAllCourses = async () => {
@@ -375,6 +396,13 @@ export const AdminStudentManagement: React.FC<{
       },
     })
 
+    await logStudentActivity(operatingStudent.id, creditAction === 'add' ? 'credits_added' : 'credits_deducted', {
+      amount: creditAmount,
+      reason: creditReason || '管理員手動調整',
+      old_total: credit?.total_credits || 0,
+      old_used: credit?.used_credits || 0,
+    })
+
     alert(`${creditAction === 'add' ? '加' : '減'} ${creditAmount} 堂成功！`)
 
     setShowCreditModal(false)
@@ -409,6 +437,12 @@ export const AdminStudentManagement: React.FC<{
 
     // 自動建立待上課的 attendance 記錄
     await generateAttendanceRecords(operatingStudent.id, courseId)
+
+    const courseName = allCourses.find(c => c.id === courseId)?.name || ''
+    await logStudentActivity(operatingStudent.id, 'enrolled', {
+      course_id: courseId,
+      course_name: courseName,
+    })
 
     alert('劃位成功')
     fetchStudentDetail(operatingStudent.id)
@@ -447,6 +481,13 @@ export const AdminStudentManagement: React.FC<{
     // 自動建立新課程的待上課記錄
     await generateAttendanceRecords(operatingStudent.id, toCourseId)
 
+    const fromCourseName = allCourses.find(c => c.id === oldEnrollment?.course_id)?.name || ''
+    const toCourseName = allCourses.find(c => c.id === toCourseId)?.name || ''
+    await logStudentActivity(operatingStudent.id, 'transferred', {
+      from_course: fromCourseName,
+      to_course: toCourseName,
+    })
+
     alert('轉班成功')
     fetchStudentDetail(operatingStudent.id)
     fetchStudents()
@@ -456,6 +497,7 @@ export const AdminStudentManagement: React.FC<{
     setSelectedStudent(student)
     fetchStudentAttendance(student.id)
     fetchStudentDetail(student.id)
+    fetchActivityLogs(student.id)
   }
 
   const filteredStudents = students.filter(s => {
@@ -511,12 +553,16 @@ export const AdminStudentManagement: React.FC<{
       notes: editForm.notes,
     }).eq('id', editForm.id)
     if (!error) await fetchStudents()
+    await logStudentActivity(editForm.id, 'info_updated', {
+      fields_changed: Object.keys(editForm).filter(k => editForm[k] !== selectedStudent?.[k]),
+    })
     setSelectedStudent(prev => prev ? { ...prev, ...editForm } : null);
     setIsEditing(false);
   };
 
   const handleDeleteStudent = async (id: string) => {
     if (confirm('確定要刪除此學員紀錄嗎？')) {
+      await logStudentActivity(id, 'deleted', { student_name: students.find(s => s.id === id)?.studentName })
       const { error } = await supabase.from('students').delete().eq('id', id)
       if (!error) await fetchStudents()
       if (selectedStudent?.id === id) setSelectedStudent(null);
@@ -1195,10 +1241,69 @@ export const AdminStudentManagement: React.FC<{
                   </div>
                 </div>
 
+                {/* 異動紀錄 */}
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-lg font-bold text-neutral-900">異動紀錄</h3>
+                    <span className="text-xs text-neutral-400">{activityLogs.length} 筆紀錄</span>
+                  </div>
+                  <div className="space-y-2 max-h-80 overflow-y-auto">
+                    {activityLogs.length > 0 ? (
+                      activityLogs.map((log: any) => {
+                        const actionLabels: Record<string, { label: string; color: string; icon: string }> = {
+                          'enrolled': { label: '報名班級', color: 'text-green-600 bg-green-50', icon: '📝' },
+                          'withdrawn': { label: '退出班級', color: 'text-red-600 bg-red-50', icon: '🚪' },
+                          'transferred': { label: '轉班', color: 'text-blue-600 bg-blue-50', icon: '🔄' },
+                          'credits_added': { label: '加堂', color: 'text-green-600 bg-green-50', icon: '➕' },
+                          'credits_deducted': { label: '扣堂', color: 'text-red-600 bg-red-50', icon: '➖' },
+                          'credits_purchased': { label: '購買堂數', color: 'text-primary bg-blue-50', icon: '💰' },
+                          'attendance_changed': { label: '出缺席變更', color: 'text-amber-600 bg-amber-50', icon: '📋' },
+                          'payment': { label: '繳費', color: 'text-green-600 bg-green-50', icon: '💳' },
+                          'refund': { label: '退費', color: 'text-red-600 bg-red-50', icon: '💸' },
+                          'info_updated': { label: '資料變更', color: 'text-neutral-600 bg-neutral-50', icon: '✏️' },
+                          'deleted': { label: '刪除學員', color: 'text-red-600 bg-red-50', icon: '🗑️' },
+                        }
+                        const info = actionLabels[log.action] || { label: log.action, color: 'text-neutral-600 bg-neutral-50', icon: '📌' }
+                        const time = new Date(log.created_at)
+                        const timeStr = `${time.getFullYear()}-${String(time.getMonth()+1).padStart(2,'0')}-${String(time.getDate()).padStart(2,'0')} ${String(time.getHours()).padStart(2,'0')}:${String(time.getMinutes()).padStart(2,'0')}`
+
+                        let detail = ''
+                        const d = log.details || {}
+                        if (log.action === 'enrolled') detail = d.course_name || ''
+                        else if (log.action === 'withdrawn') detail = d.course_name || ''
+                        else if (log.action === 'transferred') detail = `${d.from_course} → ${d.to_course}`
+                        else if (log.action === 'credits_added') detail = `+${d.amount} 堂${d.reason ? '（' + d.reason + '）' : ''}`
+                        else if (log.action === 'credits_deducted') detail = `-${d.amount} 堂${d.reason ? '（' + d.reason + '）' : ''}`
+                        else if (log.action === 'payment') detail = `NT$ ${d.amount?.toLocaleString()}`
+                        else if (log.action === 'refund') detail = `NT$ ${d.amount?.toLocaleString()}`
+                        else if (log.action === 'attendance_changed') detail = `${d.date} ${d.course_name || ''}: ${d.old_status} → ${d.new_status}`
+                        else if (log.action === 'info_updated') detail = '個人資料已更新'
+
+                        return (
+                          <div key={log.id} className="flex items-start gap-3 p-3 rounded-xl border border-neutral-100 hover:bg-neutral-50/50">
+                            <span className="text-lg">{info.icon}</span>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${info.color}`}>{info.label}</span>
+                                <span className="text-xs text-neutral-400">{timeStr}</span>
+                              </div>
+                              {detail && <p className="text-sm text-neutral-600 mt-1 truncate">{detail}</p>}
+                            </div>
+                          </div>
+                        )
+                      })
+                    ) : (
+                      <div className="py-8 text-center bg-neutral-50 rounded-2xl border border-dashed border-neutral-200">
+                        <p className="text-sm text-neutral-400">尚無異動紀錄</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
                 <div className="flex gap-4 pt-4">
-                  <Button 
-                    variant="outline" 
-                    className="flex-1 h-14 rounded-2xl" 
+                  <Button
+                    variant="outline"
+                    className="flex-1 h-14 rounded-2xl"
                     onClick={() => {
                       setSelectedStudent(null);
                       setIsEditing(false);
