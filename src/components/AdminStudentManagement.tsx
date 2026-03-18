@@ -134,6 +134,7 @@ export const AdminStudentManagement: React.FC<{
   const [selectedNewDates, setSelectedNewDates] = useState<string[]>([])
   const [loadingDates, setLoadingDates] = useState(false)
   const [activityLogs, setActivityLogs] = useState<any[]>([])
+  const [courseScheduleMap, setCourseScheduleMap] = useState<Record<string, any[]>>({})
 
   const fetchStudentAttendance = async (studentId: string) => {
     const { data } = await supabase
@@ -203,8 +204,8 @@ export const AdminStudentManagement: React.FC<{
     console.log('[課程日期] 查到 enrollments:', enrollments)
 
     if (!enrollments || enrollments.length === 0) {
-      console.log('[課程日期] 無已報名的 enrollment，清空 map')
       setCourseAttendanceMap({})
+      setCourseScheduleMap({})
       return
     }
 
@@ -216,11 +217,97 @@ export const AdminStudentManagement: React.FC<{
         .eq('student_id', studentId)
         .eq('course_id', enrollment.course_id)
         .order('date')
-      console.log('[課程日期] 課程', enrollment.course_id, 'attendance 筆數:', data?.length, '資料:', data)
       map[enrollment.course_id] = data || []
     }
-    console.log('[課程日期] 最終 courseAttendanceMap:', map)
     setCourseAttendanceMap(map)
+
+    // 查 credits
+    const { data: credits } = await supabase
+      .from('credits')
+      .select('*')
+      .eq('student_id', studentId)
+
+    // 查 holidays
+    const { data: holidays } = await supabase
+      .from('course_holidays')
+      .select('*')
+
+    const scheduleMap: Record<string, any[]> = {}
+
+    for (const enrollment of enrollments) {
+      const courseId = enrollment.course_id
+      const attendanceList = map[courseId] || []
+
+      const course = allCourses.find((c: any) => c.id === courseId)
+      if (!course) continue
+
+      const dayMap: Record<string, number> = { '週日': 0, '週一': 1, '週二': 2, '週三': 3, '週四': 4, '週五': 5, '週六': 6 }
+      const targetDay = dayMap[course.day_of_week]
+      if (targetDay === undefined) continue
+
+      const attMap: Record<string, any> = {}
+      const seen = new Set<string>()
+      for (const att of attendanceList) {
+        if (!seen.has(att.date)) {
+          seen.add(att.date)
+          attMap[att.date] = att
+        }
+      }
+
+      const holidayMap: Record<string, string> = {}
+      ;(holidays || [])
+        .filter((h: any) => h.course_id === courseId || h.course_id === null)
+        .forEach((h: any) => { holidayMap[h.date] = h.reason || '停課' })
+
+      const courseCred = (credits || []).find((c: any) => c.course_id === courseId)
+        || (credits || []).find((c: any) => !c.course_id)
+      const totalCredits = courseCred?.total_credits || 0
+
+      const sortedAtt = attendanceList.map((a: any) => a.date).sort()
+      let startDate: Date
+      if (sortedAtt.length > 0) {
+        startDate = new Date(sortedAtt[0] + 'T00:00:00')
+      } else {
+        startDate = new Date()
+      }
+      startDate.setHours(0, 0, 0, 0)
+      while (startDate.getDay() !== targetDay) {
+        startDate.setDate(startDate.getDate() + 1)
+      }
+
+      const entries: any[] = []
+      let sessionCount = 0
+      const current = new Date(startDate)
+      const maxWeeks = totalCredits > 0 ? totalCredits * 3 : 52
+      let weekCount = 0
+      const todayStr = formatLocalDate(new Date())
+
+      while (sessionCount < totalCredits && weekCount < maxWeeks) {
+        const dateStr = formatLocalDate(current)
+        weekCount++
+
+        if (holidayMap[dateStr]) {
+          entries.push({ date: dateStr, type: 'holiday', session: null, status: holidayMap[dateStr], deducted: false })
+        } else {
+          const att = attMap[dateStr]
+          const isLeave = att ? ['請假', '病假'].includes(att.status) : false
+          if (!isLeave) sessionCount++
+
+          if (att) {
+            entries.push({ id: att.id, date: dateStr, type: 'class', session: isLeave ? null : sessionCount, status: att.status, deducted: att.deducted || false })
+          } else if (dateStr <= todayStr) {
+            entries.push({ date: dateStr, type: 'class', session: sessionCount, status: '未記錄', deducted: false })
+          } else {
+            entries.push({ date: dateStr, type: 'class', session: sessionCount, status: '待上課', deducted: false })
+          }
+        }
+        current.setDate(current.getDate() + 7)
+      }
+
+      scheduleMap[courseId] = entries
+    }
+
+    setCourseScheduleMap(scheduleMap)
   }
 
   const fetchHolidays = async () => {
@@ -947,15 +1034,8 @@ export const AdminStudentManagement: React.FC<{
                         studentEnrollments.filter((e: any) => e.status === '已報名').map((enrollment: any) => {
                           const course = enrollment.courses as any
                           const courseId = enrollment.course_id
-                          const attendances = courseAttendanceMap[courseId] || []
-                          const statusColorMap: Record<string, string> = {
-                            '待上課': 'bg-neutral-100 text-neutral-600',
-                            '出席': 'bg-green-100 text-green-700',
-                            '缺席': 'bg-red-100 text-red-700',
-                            '請假': 'bg-yellow-100 text-yellow-700',
-                            '補課': 'bg-purple-100 text-purple-700',
-                          }
-                          const dayNames = ['日', '一', '二', '三', '四', '五', '六']
+                          const schedule = courseScheduleMap[courseId] || []
+                          const classCount = schedule.filter((e: any) => e.type === 'class').length
 
                           return (
                             <div key={enrollment.id} className="border border-neutral-100 rounded-2xl overflow-hidden">
@@ -974,108 +1054,131 @@ export const AdminStudentManagement: React.FC<{
                                   </div>
                                 </div>
                                 <Badge variant="neutral" className="bg-neutral-100 text-neutral-500 text-xs">
-                                  {attendances.length} 堂
+                                  {classCount} 堂
                                 </Badge>
                               </div>
 
-                              {/* Attendance list */}
+                              {/* Schedule list */}
                               <div className="divide-y divide-neutral-50">
-                                {attendances.length > 0 ? attendances.map((att: any) => {
-                                  const d = new Date(att.date + 'T00:00:00')
-                                  const dayName = dayNames[d.getDay()]
-                                  return (
-                                    <div key={att.id} className="px-4 py-2.5 flex items-center justify-between hover:bg-neutral-50/50">
-                                      <div className="flex items-center gap-3">
-                                        <span className="text-sm font-medium text-neutral-900 w-28">{att.date} ({dayName})</span>
-                                        <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${statusColorMap[att.status] || 'bg-neutral-100 text-neutral-600'}`}>
-                                          {att.status}
-                                        </span>
-                                        {att.deducted && <span className="text-[10px] text-neutral-400">扣 1 堂</span>}
+                                {schedule.length > 0 ? (
+                                  schedule.map((entry: any, idx: number) => {
+                                    const weekdays = ['日', '一', '二', '三', '四', '五', '六']
+                                    const d = new Date(entry.date + 'T00:00:00')
+                                    const weekday = `(${weekdays[d.getDay()]})`
+                                    const todayStr = formatLocalDate(new Date())
+                                    const isToday = entry.date === todayStr
+
+                                    const statusColors: Record<string, string> = {
+                                      '出席': 'bg-green-100 text-green-700',
+                                      '缺席': 'bg-red-100 text-red-700',
+                                      '請假': 'bg-yellow-100 text-yellow-700',
+                                      '遲到': 'bg-orange-100 text-orange-700',
+                                      '病假': 'bg-blue-100 text-blue-700',
+                                      '待上課': 'bg-blue-50 text-blue-500 border border-dashed border-blue-200',
+                                      '未記錄': 'bg-neutral-50 text-neutral-400 border border-dashed border-neutral-300',
+                                    }
+
+                                    if (entry.type === 'holiday') {
+                                      return (
+                                        <div key={idx} className="flex items-center justify-between py-2 px-3 rounded-lg bg-neutral-50">
+                                          <div className="flex items-center gap-2">
+                                            <span className="text-xs text-neutral-400 w-10 text-right">—</span>
+                                            <span className="text-sm text-neutral-400 line-through">{entry.date} {weekday}</span>
+                                          </div>
+                                          <span className="text-xs px-2 py-0.5 rounded-full bg-neutral-100 text-neutral-400 italic">{entry.status}</span>
+                                        </div>
+                                      )
+                                    }
+
+                                    return (
+                                      <div key={idx} className={`flex items-center justify-between py-2 px-3 rounded-lg ${isToday ? 'border-l-4 border-l-blue-500 bg-blue-50/30' : 'hover:bg-neutral-50'}`}>
+                                        <div className="flex items-center gap-2">
+                                          <span className="text-xs text-neutral-400 w-10 text-right">{entry.session ? `第${entry.session}堂` : '—'}</span>
+                                          <span className="text-sm text-neutral-700">{entry.date} {weekday}</span>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                          {entry.deducted && <span className="text-[10px] text-neutral-400">-1堂</span>}
+                                          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${statusColors[entry.status] || 'bg-neutral-100 text-neutral-500'}`}>{entry.status}</span>
+                                        </div>
                                       </div>
-                                      {att.status === '待上課' && (
-                                        <button
-                                          onClick={() => handleDeleteAttendance(att.id, selectedStudent.id)}
-                                          className="w-7 h-7 flex items-center justify-center rounded-lg text-neutral-300 hover:text-red-500 hover:bg-red-50 transition-colors"
-                                        >
-                                          <X size={14} />
-                                        </button>
-                                      )}
-                                    </div>
-                                  )
-                                }) : (
+                                    )
+                                  })
+                                ) : (
                                   <div className="px-4 py-4 text-center text-sm text-neutral-400">尚無排定日期</div>
                                 )}
                               </div>
 
                               {/* Add dates section */}
-                              <div className="px-4 py-3 border-t border-neutral-100">
-                                {addingDateCourseId === courseId ? (
-                                  <div className="space-y-3">
-                                    <p className="text-xs font-bold text-neutral-500">選擇要新增的上課日期：</p>
-                                    {loadingDates ? (
-                                      <p className="text-sm text-neutral-400 text-center py-2">計算中...</p>
-                                    ) : availableDates.length > 0 ? (
-                                      <div className="flex flex-wrap gap-2 max-h-40 overflow-y-auto">
-                                        {availableDates.map(date => {
-                                          const d = new Date(date + 'T00:00:00')
-                                          const dayName = dayNames[d.getDay()]
-                                          const isSelected = selectedNewDates.includes(date)
-                                          return (
-                                            <button
-                                              key={date}
-                                              onClick={() => {
-                                                setSelectedNewDates(prev =>
-                                                  isSelected ? prev.filter(d => d !== date) : [...prev, date]
-                                                )
-                                              }}
-                                              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                                                isSelected
-                                                  ? 'bg-primary text-white shadow-sm'
-                                                  : 'bg-neutral-50 text-neutral-600 hover:bg-neutral-100 border border-neutral-200'
-                                              }`}
-                                            >
-                                              {date} ({dayName})
-                                            </button>
-                                          )
-                                        })}
-                                      </div>
-                                    ) : (
-                                      <p className="text-sm text-neutral-400 text-center py-2">沒有可用的日期</p>
-                                    )}
-                                    <div className="flex gap-2">
-                                      <button
-                                        onClick={() => {
-                                          setAddingDateCourseId(null)
-                                          setSelectedNewDates([])
-                                          setAvailableDates([])
-                                        }}
-                                        className="flex-1 py-2 text-sm font-medium bg-neutral-100 rounded-lg hover:bg-neutral-200 transition-colors"
-                                      >
-                                        取消
-                                      </button>
-                                      {selectedNewDates.length > 0 && (
-                                        <button
-                                          onClick={() => handleAddAttendanceDates(courseId, selectedStudent.id)}
-                                          className="flex-1 py-2 text-sm font-medium bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors"
-                                        >
-                                          確認新增 {selectedNewDates.length} 個日期
-                                        </button>
+                              {classCount === 0 && (
+                                <div className="px-4 py-3 border-t border-neutral-100">
+                                  {addingDateCourseId === courseId ? (
+                                    <div className="space-y-3">
+                                      <p className="text-xs font-bold text-neutral-500">選擇要新增的上課日期：</p>
+                                      {loadingDates ? (
+                                        <p className="text-sm text-neutral-400 text-center py-2">計算中...</p>
+                                      ) : availableDates.length > 0 ? (
+                                        <div className="flex flex-wrap gap-2 max-h-40 overflow-y-auto">
+                                          {availableDates.map(date => {
+                                            const dd = new Date(date + 'T00:00:00')
+                                            const dayName = ['日', '一', '二', '三', '四', '五', '六'][dd.getDay()]
+                                            const isSelected = selectedNewDates.includes(date)
+                                            return (
+                                              <button
+                                                key={date}
+                                                onClick={() => {
+                                                  setSelectedNewDates(prev =>
+                                                    isSelected ? prev.filter(d => d !== date) : [...prev, date]
+                                                  )
+                                                }}
+                                                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                                                  isSelected
+                                                    ? 'bg-primary text-white shadow-sm'
+                                                    : 'bg-neutral-50 text-neutral-600 hover:bg-neutral-100 border border-neutral-200'
+                                                }`}
+                                              >
+                                                {date} ({dayName})
+                                              </button>
+                                            )
+                                          })}
+                                        </div>
+                                      ) : (
+                                        <p className="text-sm text-neutral-400 text-center py-2">沒有可用的日期</p>
                                       )}
+                                      <div className="flex gap-2">
+                                        <button
+                                          onClick={() => {
+                                            setAddingDateCourseId(null)
+                                            setSelectedNewDates([])
+                                            setAvailableDates([])
+                                          }}
+                                          className="flex-1 py-2 text-sm font-medium bg-neutral-100 rounded-lg hover:bg-neutral-200 transition-colors"
+                                        >
+                                          取消
+                                        </button>
+                                        {selectedNewDates.length > 0 && (
+                                          <button
+                                            onClick={() => handleAddAttendanceDates(courseId, selectedStudent.id)}
+                                            className="flex-1 py-2 text-sm font-medium bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors"
+                                          >
+                                            確認新增 {selectedNewDates.length} 個日期
+                                          </button>
+                                        )}
+                                      </div>
                                     </div>
-                                  </div>
-                                ) : (
-                                  <button
-                                    onClick={() => {
-                                      setAddingDateCourseId(courseId)
-                                      computeAvailableDates(courseId, selectedStudent.id)
-                                    }}
-                                    className="w-full py-2 flex items-center justify-center gap-1.5 text-sm font-medium text-primary hover:bg-primary/5 rounded-lg transition-colors"
-                                  >
-                                    <Plus size={16} />
-                                    新增日期
-                                  </button>
-                                )}
-                              </div>
+                                  ) : (
+                                    <button
+                                      onClick={() => {
+                                        setAddingDateCourseId(courseId)
+                                        computeAvailableDates(courseId, selectedStudent.id)
+                                      }}
+                                      className="w-full py-2 flex items-center justify-center gap-1.5 text-sm font-medium text-primary hover:bg-primary/5 rounded-lg transition-colors"
+                                    >
+                                      <Plus size={16} />
+                                      新增日期
+                                    </button>
+                                  )}
+                                </div>
+                              )}
                             </div>
                           )
                         })
