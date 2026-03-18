@@ -880,7 +880,27 @@ const CourseAttendanceTab: React.FC<{
       .eq('course_id', courseId)
       .eq('status', '已報名');
 
-    // 2. 查該日已有的 attendance
+    const studentIds = (enrollments || []).map((e: any) => e.student_id);
+
+    // 2. 查每位學員的 credits，過濾掉沒有堂數的
+    let validStudentIds = new Set<string>();
+    if (studentIds.length > 0) {
+      const { data: credits } = await supabase
+        .from('credits')
+        .select('student_id, remaining_credits, status')
+        .in('student_id', studentIds)
+        .eq('status', 'active');
+
+      for (const c of (credits || [])) {
+        if ((c.remaining_credits || 0) > 0) {
+          validStudentIds.add(c.student_id);
+        }
+      }
+    }
+
+    const validEnrollments = (enrollments || []).filter((e: any) => validStudentIds.has(e.student_id));
+
+    // 3. 查該日已有的 attendance
     const { data: existingAtt } = await supabase
       .from('attendance')
       .select('id, student_id, status, deducted, students(name, student_code)')
@@ -889,11 +909,11 @@ const CourseAttendanceTab: React.FC<{
 
     const existingMap = new Map((existingAtt || []).map(a => [a.student_id, a]));
 
-    // 3. 合併：已有紀錄的用紀錄，沒有的顯示為未點名
+    // 4. 合併：已有紀錄的用紀錄，沒有的顯示為未點名（只顯示有堂數的學員）
     const todayStr = formatLocalDate(new Date());
     const isPast = selectedDate <= todayStr;
 
-    const records = (enrollments || []).map((e: any) => {
+    const records = validEnrollments.map((e: any) => {
       const existing = existingMap.get(e.student_id);
       if (existing) return existing;
       return {
