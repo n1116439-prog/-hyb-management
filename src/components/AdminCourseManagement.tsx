@@ -883,7 +883,24 @@ const CourseAttendanceTab: React.FC<{
       .eq('course_id', courseId)
       .eq('date', selectedDate);
 
-    setAttendanceRecords(existingAtt || []);
+    // 查詢該日期的試上學員
+    const { data: trialData } = await supabase
+      .from('trial_bookings')
+      .select('id, student_id, students(id, name, student_code, phone)')
+      .eq('course_id', courseId)
+      .eq('trial_date', selectedDate)
+      .in('status', ['待確認', '已確認']);
+
+    const trialEntries = (trialData || []).map((t: any) => ({
+      id: 'trial-' + t.id,
+      student_id: t.student_id,
+      status: '試上',
+      deducted: false,
+      students: t.students,
+      isTrial: true,
+    }));
+
+    setAttendanceRecords([...(existingAtt || []), ...trialEntries]);
   }, [courseId, selectedDate]);
 
   useEffect(() => { fetchDates(); }, [fetchDates]);
@@ -964,6 +981,8 @@ const CourseAttendanceTab: React.FC<{
     '補課': { label: '補課', color: 'bg-purple-100 text-purple-700' },
     '遲到': { label: '遲到', color: 'bg-orange-100 text-orange-700' },
     '病假': { label: '病假', color: 'bg-blue-100 text-blue-700' },
+    '試上': { label: '試上', color: 'bg-orange-100 text-orange-600' },
+    '已劃位': { label: '已劃位', color: 'bg-purple-50 text-purple-600' },
   };
 
   if (loading) {
@@ -1075,7 +1094,9 @@ const CourseAttendanceTab: React.FC<{
                       )}
                     </td>
                     <td className="px-6 py-4">
-                      {isSaving ? (
+                      {(record as any).isTrial ? (
+                        <span className="text-xs text-neutral-400">試上學員</span>
+                      ) : isSaving ? (
                         <RefreshCw className="animate-spin text-neutral-400" size={14} />
                       ) : (
                         <div className="flex gap-1">

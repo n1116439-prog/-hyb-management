@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { AdminTrialManagement } from './AdminTrialManagement';
 
 function formatLocalDate(date: Date): string {
   const year = date.getFullYear()
@@ -812,7 +813,7 @@ export const AdminStudentManagement: React.FC<{
 
       {/* Category Tabs */}
       <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
-        {['所有學員', '已參加', '未參加', '新註冊'].map(tab => (
+        {['所有學員', '已參加', '未參加', '新註冊', '試上名單'].map(tab => (
           <button
             key={tab}
             onClick={() => setCategoryTab(tab)}
@@ -855,6 +856,9 @@ export const AdminStudentManagement: React.FC<{
       </div>
 
       {/* Student List */}
+      {categoryTab === '試上名單' ? (
+        <AdminTrialManagement />
+      ) : (
       <div className="bg-white rounded-[32px] shadow-sm border border-neutral-100 overflow-hidden">
         <table className="w-full text-left border-collapse">
           <thead>
@@ -955,6 +959,7 @@ export const AdminStudentManagement: React.FC<{
           </tbody>
         </table>
       </div>
+      )}
 
       {/* Student Detail Modal */}
       <AnimatePresence>
