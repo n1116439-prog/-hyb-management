@@ -387,7 +387,7 @@ export const AdminStudentManagement: React.FC<{
       student_id: studentId,
       course_id: courseId,
       date,
-      status: '待上課',
+      status: '已劃位',
       deducted: false,
     }))
     const { error } = await supabase.from('attendance').insert(inserts)
@@ -405,11 +405,39 @@ export const AdminStudentManagement: React.FC<{
   }
 
   const handleDeleteAttendance = async (attendanceId: string, studentId: string) => {
-    if (!confirm('確定要刪除此待上課日期？')) return
+    if (!confirm('確定要刪除此日期？')) return
     const { error } = await supabase.from('attendance').delete().eq('id', attendanceId)
     if (error) {
       alert('刪除失敗：' + error.message)
       return
+    }
+    // 同步 credits used_credits
+    const { data: allAtt } = await supabase.from('attendance').select('id').eq('student_id', studentId).eq('deducted', true)
+    const newUsed = allAtt?.length || 0
+    const { data: cred } = await supabase.from('credits').select('id').eq('student_id', studentId).eq('status', 'active').limit(1)
+    if (cred && cred.length > 0) {
+      await supabase.from('credits').update({ used_credits: newUsed }).eq('id', cred[0].id)
+    }
+    await fetchCourseAttendance(studentId)
+    fetchStudentAttendance(studentId)
+  }
+
+  const handleAttendanceStatusChange = async (attendanceId: string, studentId: string, newStatus: string) => {
+    const deductedStatuses = ['出席', '缺席', '遲到']
+    const deducted = deductedStatuses.includes(newStatus)
+
+    const { error } = await supabase.from('attendance').update({ status: newStatus, deducted }).eq('id', attendanceId)
+    if (error) {
+      alert('更新失敗：' + error.message)
+      return
+    }
+
+    // 同步 credits used_credits
+    const { data: allAtt } = await supabase.from('attendance').select('id').eq('student_id', studentId).eq('deducted', true)
+    const newUsed = allAtt?.length || 0
+    const { data: cred } = await supabase.from('credits').select('id').eq('student_id', studentId).eq('status', 'active').limit(1)
+    if (cred && cred.length > 0) {
+      await supabase.from('credits').update({ used_credits: newUsed }).eq('id', cred[0].id)
     }
     await fetchCourseAttendance(studentId)
     fetchStudentAttendance(studentId)
@@ -1071,6 +1099,54 @@ export const AdminStudentManagement: React.FC<{
                               </div>
 
                               {/* Schedule list */}
+                              {/* 新增日期按鈕 */}
+                              <div className="px-4 py-2 border-b border-neutral-100">
+                                {addingDateCourseId === courseId ? (
+                                  <div className="space-y-2">
+                                    {loadingDates ? (
+                                      <p className="text-xs text-neutral-400">載入中...</p>
+                                    ) : availableDates.length === 0 ? (
+                                      <p className="text-xs text-neutral-400">無可選日期</p>
+                                    ) : (
+                                      <div className="flex flex-wrap gap-1">
+                                        {availableDates.map(date => (
+                                          <button
+                                            key={date}
+                                            onClick={() => setSelectedNewDates(prev => prev.includes(date) ? prev.filter(d => d !== date) : [...prev, date])}
+                                            className={`text-xs px-2 py-1 rounded-lg border transition-all ${selectedNewDates.includes(date) ? 'bg-primary text-white border-primary' : 'bg-white text-neutral-600 border-neutral-200 hover:border-primary'}`}
+                                          >
+                                            {date}
+                                          </button>
+                                        ))}
+                                      </div>
+                                    )}
+                                    <div className="flex gap-2">
+                                      <button
+                                        onClick={() => handleAddAttendanceDates(courseId, selectedStudent!.id)}
+                                        disabled={selectedNewDates.length === 0}
+                                        className="text-xs px-3 py-1 bg-primary text-white rounded-lg disabled:opacity-50"
+                                      >
+                                        新增 {selectedNewDates.length} 個日期
+                                      </button>
+                                      <button
+                                        onClick={() => { setAddingDateCourseId(null); setSelectedNewDates([]); setAvailableDates([]) }}
+                                        className="text-xs px-3 py-1 bg-neutral-100 text-neutral-600 rounded-lg"
+                                      >
+                                        取消
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <button
+                                    onClick={() => { setAddingDateCourseId(courseId); computeAvailableDates(courseId, selectedStudent!.id) }}
+                                    className="flex items-center gap-1 text-xs text-primary font-medium hover:underline"
+                                  >
+                                    <Plus size={14} /> 新增日期
+                                  </button>
+                                )}
+                              </div>
+
+                              {/* Schedule list */}
                               <div className="divide-y divide-neutral-50">
                                 {schedule.length > 0 ? (
                                   schedule.map((entry: any, idx: number) => {
@@ -1087,8 +1163,12 @@ export const AdminStudentManagement: React.FC<{
                                       '遲到': 'bg-orange-100 text-orange-700',
                                       '病假': 'bg-blue-100 text-blue-700',
                                       '待上課': 'bg-blue-50 text-blue-500 border border-dashed border-blue-200',
+                                      '已劃位': 'bg-purple-50 text-purple-500 border border-dashed border-purple-200',
                                       '未記錄': 'bg-neutral-50 text-neutral-400 border border-dashed border-neutral-300',
                                     }
+
+                                    const canEdit = ['待上課', '已劃位', '未記錄'].includes(entry.status) || entry.id
+                                    const canDelete = ['待上課', '已劃位'].includes(entry.status) && entry.id
 
                                     if (entry.type === 'holiday') {
                                       return (
@@ -1110,7 +1190,27 @@ export const AdminStudentManagement: React.FC<{
                                         </div>
                                         <div className="flex items-center gap-2">
                                           {entry.deducted && <span className="text-[10px] text-neutral-400">-1堂</span>}
-                                          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${statusColors[entry.status] || 'bg-neutral-100 text-neutral-500'}`}>{entry.status}</span>
+                                          {entry.id ? (
+                                            <select
+                                              value={entry.status}
+                                              onChange={(e) => handleAttendanceStatusChange(entry.id, selectedStudent!.id, e.target.value)}
+                                              className={`text-xs px-2 py-0.5 rounded-full font-medium border-0 cursor-pointer ${statusColors[entry.status] || 'bg-neutral-100 text-neutral-500'}`}
+                                            >
+                                              {['出席', '缺席', '請假', '病假', '遲到', '已劃位'].map(s => (
+                                                <option key={s} value={s}>{s}</option>
+                                              ))}
+                                            </select>
+                                          ) : (
+                                            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${statusColors[entry.status] || 'bg-neutral-100 text-neutral-500'}`}>{entry.status}</span>
+                                          )}
+                                          {canDelete && (
+                                            <button
+                                              onClick={() => handleDeleteAttendance(entry.id, selectedStudent!.id)}
+                                              className="text-neutral-300 hover:text-red-500 transition-colors"
+                                            >
+                                              <X size={14} />
+                                            </button>
+                                          )}
                                         </div>
                                       </div>
                                     )
