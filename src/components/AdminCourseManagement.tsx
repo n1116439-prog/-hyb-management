@@ -873,64 +873,17 @@ const CourseAttendanceTab: React.FC<{
     setLoading(false);
   }, [courseId]);
 
-  // 取得選中日期的所有已報名學員 + 已有的 attendance 紀錄
+  // 取得選中日期已有 attendance 記錄的學員
   const fetchAttendanceForDate = useCallback(async () => {
     if (!selectedDate) { setAttendanceRecords([]); return; }
 
-    // 1. 查已報名學員
-    const { data: enrollments } = await supabase
-      .from('enrollments')
-      .select('student_id, students(id, name, student_code)')
-      .eq('course_id', courseId)
-      .eq('status', '已報名');
-
-    const studentIds = (enrollments || []).map((e: any) => e.student_id);
-
-    // 2. 查每位學員的 credits，過濾掉沒有堂數的
-    let validStudentIds = new Set<string>();
-    if (studentIds.length > 0) {
-      const { data: credits } = await supabase
-        .from('credits')
-        .select('student_id, remaining_credits, status')
-        .in('student_id', studentIds)
-        .eq('status', 'active');
-
-      for (const c of (credits || [])) {
-        if ((c.remaining_credits || 0) > 0) {
-          validStudentIds.add(c.student_id);
-        }
-      }
-    }
-
-    const validEnrollments = (enrollments || []).filter((e: any) => validStudentIds.has(e.student_id));
-
-    // 3. 查該日已有的 attendance
     const { data: existingAtt } = await supabase
       .from('attendance')
       .select('id, student_id, status, deducted, students(name, student_code)')
       .eq('course_id', courseId)
       .eq('date', selectedDate);
 
-    const existingMap = new Map((existingAtt || []).map(a => [a.student_id, a]));
-
-    // 4. 合併：已有紀錄的用紀錄，沒有的顯示為未點名（只顯示有堂數的學員）
-    const todayStr = formatLocalDate(new Date());
-    const isPast = selectedDate <= todayStr;
-
-    const records = validEnrollments.map((e: any) => {
-      const existing = existingMap.get(e.student_id);
-      if (existing) return existing;
-      return {
-        id: null,
-        student_id: e.student_id,
-        status: isPast ? '未記錄' : '待上課',
-        deducted: false,
-        students: e.students,
-        _isNew: true,
-      };
-    });
-
-    setAttendanceRecords(records);
+    setAttendanceRecords(existingAtt || []);
   }, [courseId, selectedDate]);
 
   useEffect(() => { fetchDates(); }, [fetchDates]);
@@ -941,14 +894,8 @@ const CourseAttendanceTab: React.FC<{
   };
 
   const syncCredits = async (studentId: string) => {
-    const { data: attCount } = await supabase
-      .from('attendance')
-      .select('id')
-      .eq('student_id', studentId)
-      .eq('course_id', courseId)
-      .eq('deducted', true);
-
-    const newUsed = attCount?.length || 0;
+    const { count: totalCount } = await supabase.from('attendance').select('*', { count: 'exact', head: true }).eq('student_id', studentId);
+    const { count: usedCount } = await supabase.from('attendance').select('*', { count: 'exact', head: true }).eq('student_id', studentId).eq('deducted', true);
 
     const { data: studentCred } = await supabase
       .from('credits')
@@ -958,40 +905,27 @@ const CourseAttendanceTab: React.FC<{
       .limit(1);
 
     if (studentCred && studentCred.length > 0) {
-      await supabase.from('credits').update({ used_credits: newUsed }).eq('id', studentCred[0].id);
+      await supabase.from('credits').update({
+        total_credits: totalCount || 0,
+        used_credits: usedCount || 0,
+      }).eq('id', studentCred[0].id);
     }
   };
 
   const handleStatusChange = async (record: any, newStatus: string) => {
-    const recordKey = record.id || record.student_id;
-    setSavingId(recordKey);
+    if (!record.id) return;
+    setSavingId(record.id);
 
     const deducted = getDeducted(newStatus);
 
-    if (record.id && !record._isNew) {
-      // 已有紀錄：更新
-      const { error } = await supabase
-        .from('attendance')
-        .update({ status: newStatus, deducted })
-        .eq('id', record.id);
+    const { error } = await supabase
+      .from('attendance')
+      .update({ status: newStatus, deducted })
+      .eq('id', record.id);
 
-      if (error) { alert('更新失敗：' + error.message); setSavingId(null); return; }
-    } else {
-      // 新紀錄：insert
-      const { error } = await supabase.from('attendance').insert({
-        student_id: record.student_id,
-        course_id: courseId,
-        date: selectedDate,
-        status: newStatus,
-        deducted,
-      });
+    if (error) { alert('更新失敗：' + error.message); setSavingId(null); return; }
 
-      if (error) { alert('新增失敗：' + error.message); setSavingId(null); return; }
-    }
-
-    // 同步更新 credits
     await syncCredits(record.student_id);
-
     await fetchAttendanceForDate();
     setSavingId(null);
   };
@@ -1000,25 +934,14 @@ const CourseAttendanceTab: React.FC<{
     if (!selectedDate) return;
     if (!confirm(`確定要將 ${selectedDate} 所有尚未點名的學員標記為「出席」嗎？`)) return;
 
-    const unmarked = attendanceRecords.filter(r => r._isNew || r.status === '待上課' || r.status === '未記錄');
+    const unmarked = attendanceRecords.filter(r => r.id && ['待上課', '已劃位', '未記錄'].includes(r.status));
     let failCount = 0;
 
     for (const record of unmarked) {
-      if (record.id && !record._isNew) {
-        const { error } = await supabase.from('attendance')
-          .update({ status: '出席', deducted: true })
-          .eq('id', record.id);
-        if (error) failCount++;
-      } else {
-        const { error } = await supabase.from('attendance').insert({
-          student_id: record.student_id,
-          course_id: courseId,
-          date: selectedDate,
-          status: '出席',
-          deducted: true,
-        });
-        if (error) failCount++;
-      }
+      const { error } = await supabase.from('attendance')
+        .update({ status: '出席', deducted: true })
+        .eq('id', record.id);
+      if (error) failCount++;
     }
 
     if (failCount > 0) alert(`有 ${failCount} 筆標記失敗，請重新整理確認`);
@@ -1187,7 +1110,7 @@ const CourseAttendanceTab: React.FC<{
           {attendanceRecords.length === 0 && (
             <div className="py-12 text-center">
               <UserCheck className="mx-auto mb-3 text-neutral-300" size={32} />
-              <p className="text-sm text-neutral-500">此日期尚無已報名學員</p>
+              <p className="text-sm text-neutral-500">此日期尚無已劃位學員</p>
             </div>
           )}
         </div>

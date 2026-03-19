@@ -663,35 +663,97 @@ export const AdminStudentManagement: React.FC<{
   const handleTransfer = async (fromEnrollmentId: string, toCourseId: string) => {
     if (!operatingStudent) return
 
-    // 取得舊 enrollment 的 course_id
+    // 1. 取得舊 enrollment 的 course_id
     const { data: oldEnrollment } = await supabase
       .from('enrollments')
       .select('course_id')
       .eq('id', fromEnrollmentId)
       .single()
 
+    // 2. 舊 enrollment 改為已退出
     await supabase.from('enrollments').update({
       status: '已退出',
       withdrawn_at: new Date().toISOString(),
     }).eq('id', fromEnrollmentId)
 
-    // 刪除舊課程未來的待上課記錄
+    // 3. 刪除舊課程的已劃位/待上課 attendance
     if (oldEnrollment) {
       await supabase.from('attendance').delete()
         .eq('student_id', operatingStudent.id)
         .eq('course_id', oldEnrollment.course_id)
-        .eq('status', '待上課')
+        .in('status', ['已劃位', '待上課'])
     }
 
+    // 4. 建立新 enrollment
     await supabase.from('enrollments').insert({
       student_id: operatingStudent.id,
       course_id: toCourseId,
       status: '已報名',
     })
 
-    // 自動建立新課程的待上課記錄
-    await generateAttendanceRecords(operatingStudent.id, toCourseId)
+    // 5. 計算剩餘可劃位堂數
+    const { data: activeCred } = await supabase
+      .from('credits')
+      .select('id, remaining_credits')
+      .eq('student_id', operatingStudent.id)
+      .eq('status', 'active')
+      .limit(1)
+    const remainingCredits = activeCred?.[0]?.remaining_credits || 0
+    const creditId = activeCred?.[0]?.id || null
 
+    // 6. 在新課程建立已劃位 attendance
+    if (remainingCredits > 0) {
+      const newCourse = allCourses.find((c: any) => c.id === toCourseId)
+      const dayMap: Record<string, number> = { '週日': 0, '週一': 1, '週二': 2, '週三': 3, '週四': 4, '週五': 5, '週六': 6 }
+      const targetDay = newCourse ? dayMap[newCourse.day_of_week] : undefined
+
+      if (targetDay !== undefined) {
+        // 讀取停課日（含全域停課）
+        const { data: holidayData } = await supabase
+          .from('course_holidays')
+          .select('date')
+          .or(`course_id.eq.${toCourseId},course_id.is.null`)
+        const holidaySet = new Set((holidayData || []).map((h: any) => h.date))
+
+        const current = new Date()
+        while (current.getDay() !== targetDay) {
+          current.setDate(current.getDate() + 1)
+        }
+
+        const newDates: string[] = []
+        while (newDates.length < remainingCredits) {
+          const dateStr = formatLocalDate(current)
+          if (!holidaySet.has(dateStr)) {
+            newDates.push(dateStr)
+          }
+          current.setDate(current.getDate() + 7)
+        }
+
+        if (newDates.length > 0) {
+          const inserts = newDates.map(date => ({
+            student_id: operatingStudent.id,
+            course_id: toCourseId,
+            date,
+            status: '已劃位',
+            deducted: false,
+            credit_id: creditId,
+          }))
+          await supabase.from('attendance').insert(inserts)
+        }
+      }
+    }
+
+    // 7. sync credits
+    const { count: totalCount } = await supabase.from('attendance').select('*', { count: 'exact', head: true }).eq('student_id', operatingStudent.id)
+    const { count: usedCount } = await supabase.from('attendance').select('*', { count: 'exact', head: true }).eq('student_id', operatingStudent.id).eq('deducted', true)
+    if (creditId) {
+      await supabase.from('credits').update({
+        total_credits: totalCount || 0,
+        used_credits: usedCount || 0,
+      }).eq('id', creditId)
+    }
+
+    // 8. activity log
     const fromCourseName = allCourses.find(c => c.id === oldEnrollment?.course_id)?.name || ''
     const toCourseName = allCourses.find(c => c.id === toCourseId)?.name || ''
     await logStudentActivity(operatingStudent.id, 'transferred', {
