@@ -195,14 +195,11 @@ export const AdminStudentManagement: React.FC<{
   }
 
   const fetchCourseAttendance = async (studentId: string) => {
-    // 直接從 DB 查，不依賴 state
     const { data: enrollments } = await supabase
       .from('enrollments')
-      .select('course_id, status')
+      .select('course_id, status, courses(id, name, day_of_week, start_time, end_time, venues(name))')
       .eq('student_id', studentId)
       .eq('status', '已報名')
-
-    console.log('[課程日期] 查到 enrollments:', enrollments)
 
     if (!enrollments || enrollments.length === 0) {
       setCourseAttendanceMap({})
@@ -211,6 +208,8 @@ export const AdminStudentManagement: React.FC<{
     }
 
     const map: Record<string, any[]> = {}
+    const scheduleMap: Record<string, any[]> = {}
+
     for (const enrollment of enrollments) {
       const { data } = await supabase
         .from('attendance')
@@ -218,95 +217,31 @@ export const AdminStudentManagement: React.FC<{
         .eq('student_id', studentId)
         .eq('course_id', enrollment.course_id)
         .order('date')
-      map[enrollment.course_id] = data || []
-    }
-    setCourseAttendanceMap(map)
 
-    // 查 credits
-    const { data: credits } = await supabase
-      .from('credits')
-      .select('*')
-      .eq('student_id', studentId)
-
-    // 查 holidays
-    const { data: holidays } = await supabase
-      .from('course_holidays')
-      .select('*')
-
-    const scheduleMap: Record<string, any[]> = {}
-
-    for (const enrollment of enrollments) {
-      const courseId = enrollment.course_id
-      const attendanceList = map[courseId] || []
-
-      const course = allCourses.find((c: any) => c.id === courseId)
-      if (!course) continue
-
-      const dayMap: Record<string, number> = { '週日': 0, '週一': 1, '週二': 2, '週三': 3, '週四': 4, '週五': 5, '週六': 6 }
-      const targetDay = dayMap[course.day_of_week]
-      if (targetDay === undefined) continue
-
-      const attMap: Record<string, any> = {}
-      const seen = new Set<string>()
-      for (const att of attendanceList) {
-        if (!seen.has(att.date)) {
-          seen.add(att.date)
-          attMap[att.date] = att
-        }
-      }
-
-      const holidayMap: Record<string, string> = {}
-      ;(holidays || [])
-        .filter((h: any) => h.course_id === courseId || h.course_id === null)
-        .forEach((h: any) => { holidayMap[h.date] = h.reason || '停課' })
-
-      const courseCred = (credits || []).find((c: any) => c.status === 'active')
-      const totalCredits = courseCred?.total_credits || 0
-
-      const sortedAtt = attendanceList.map((a: any) => a.date).sort()
-      let startDate: Date
-      if (sortedAtt.length > 0) {
-        startDate = new Date(sortedAtt[0] + 'T00:00:00')
-      } else {
-        startDate = new Date()
-      }
-      startDate.setHours(0, 0, 0, 0)
-      while (startDate.getDay() !== targetDay) {
-        startDate.setDate(startDate.getDate() + 1)
-      }
+      const attList = data || []
+      map[enrollment.course_id] = attList
 
       const entries: any[] = []
       let sessionCount = 0
-      const current = new Date(startDate)
-      const maxWeeks = totalCredits > 0 ? totalCredits * 3 : 52
-      let weekCount = 0
-      const todayStr = formatLocalDate(new Date())
 
-      while (sessionCount < totalCredits && weekCount < maxWeeks) {
-        const dateStr = formatLocalDate(current)
-        weekCount++
+      for (const att of attList) {
+        const isLeave = ['請假', '病假'].includes(att.status)
+        if (!isLeave) sessionCount++
 
-        if (holidayMap[dateStr]) {
-          entries.push({ date: dateStr, type: 'holiday', session: null, status: holidayMap[dateStr], deducted: false })
-        } else {
-          const att = attMap[dateStr]
-          const isLeave = att ? ['請假', '病假'].includes(att.status) : false
-          if (!isLeave) sessionCount++
-
-          if (att) {
-            entries.push({ id: att.id, date: dateStr, type: 'class', session: isLeave ? null : sessionCount, status: att.status, deducted: att.deducted || false })
-          } else if (dateStr <= todayStr) {
-            entries.push({ date: dateStr, type: 'class', session: sessionCount, status: '未記錄', deducted: false })
-          } else {
-            entries.push({ date: dateStr, type: 'class', session: sessionCount, status: '待上課', deducted: false })
-          }
-        }
-        current.setDate(current.getDate() + 7)
+        entries.push({
+          id: att.id,
+          date: att.date,
+          type: 'class',
+          session: isLeave ? null : sessionCount,
+          status: att.status,
+          deducted: att.deducted || false,
+        })
       }
 
-      scheduleMap[courseId] = entries
+      scheduleMap[enrollment.course_id] = entries
     }
 
+    setCourseAttendanceMap(map)
     setCourseScheduleMap(scheduleMap)
   }
 
@@ -1156,7 +1091,6 @@ export const AdminStudentManagement: React.FC<{
                         setDetailTab('dates')
                         if (Object.keys(courseAttendanceMap).length === 0) {
                           fetchCourseAttendance(selectedStudent.id)
-                          fetchHolidays()
                         }
                       }}
                       className={`flex-1 py-2 px-4 rounded-lg text-sm font-bold transition-all ${
