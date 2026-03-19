@@ -140,7 +140,7 @@ export const AdminStudentManagement: React.FC<{
   const fetchStudentAttendance = async (studentId: string) => {
     const { data } = await supabase
       .from('attendance')
-      .select('id, date, status, deducted, courses(name, time, venues(name))')
+      .select('id, date, status, deducted, courses(name, start_time, end_time, venues(name))')
       .eq('student_id', studentId)
       .order('date', { ascending: false })
       .limit(50)
@@ -150,7 +150,7 @@ export const AdminStudentManagement: React.FC<{
       status: a.status,
       deducted: a.deducted,
       courseName: (a.courses as any)?.name || '',
-      courseTime: (a.courses as any)?.time || '',
+      courseTime: (a.courses as any)?.start_time?.slice(0,5) || '',
       location: (a.courses as any)?.venues?.name || '',
     })))
   }
