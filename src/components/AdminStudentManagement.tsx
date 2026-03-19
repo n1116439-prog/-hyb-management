@@ -469,19 +469,24 @@ export const AdminStudentManagement: React.FC<{
       return
     }
 
+    // 讀取課程資訊（for day_of_week）
+    const course = allCourses.find((c: any) => c.id === targetCourseId)
+    const dayMap: Record<string, number> = { '週日': 0, '週一': 1, '週二': 2, '週三': 3, '週四': 4, '週五': 5, '週六': 6 }
+    const targetDay = course ? dayMap[course.day_of_week] : undefined
+
     if (credit) {
-      const updateData: any = {}
       if (creditAction === 'add') {
-        updateData.total_credits = credit.total_credits + creditAmount
+        const { error } = await supabase.from('credits').update({
+          total_credits: credit.total_credits + creditAmount,
+        }).eq('id', credit.id)
+        if (error) { alert('更新失敗：' + error.message); return }
       } else {
-        updateData.used_credits = (credit.used_credits || 0) + creditAmount
-      }
-
-      const { error } = await supabase.from('credits').update(updateData).eq('id', credit.id)
-
-      if (error) {
-        alert('更新失敗：' + error.message)
-        return
+        // 減堂：total_credits 不能低於 used_credits
+        const newTotal = Math.max(credit.total_credits - creditAmount, credit.used_credits || 0)
+        const { error } = await supabase.from('credits').update({
+          total_credits: newTotal,
+        }).eq('id', credit.id)
+        if (error) { alert('更新失敗：' + error.message); return }
       }
     } else {
       const expiryDate = new Date()
@@ -500,9 +505,85 @@ export const AdminStudentManagement: React.FC<{
         status: 'active',
       })
 
-      if (error) {
-        alert('新增失敗：' + error.message)
-        return
+      if (error) { alert('新增失敗：' + error.message); return }
+    }
+
+    // 取得最新的 credit id
+    const { data: latestCred } = await supabase.from('credits').select('id').eq('student_id', operatingStudent.id).eq('status', 'active').limit(1).single()
+
+    if (creditAction === 'add' && targetDay !== undefined) {
+      // 加堂：新增 attendance 記錄
+      // 找該學員在該課程最後一筆 attendance 日期
+      const { data: lastAtt } = await supabase
+        .from('attendance')
+        .select('date')
+        .eq('student_id', operatingStudent.id)
+        .eq('course_id', targetCourseId)
+        .order('date', { ascending: false })
+        .limit(1)
+
+      // 讀取停課日
+      const { data: holidayData } = await supabase
+        .from('course_holidays')
+        .select('date')
+        .or(`course_id.eq.${targetCourseId},course_id.is.null`)
+      const holidaySet = new Set((holidayData || []).map((h: any) => h.date))
+
+      // 從最後一筆日期的下一週開始，如果沒有 attendance 則從今天開始
+      const current = new Date()
+      if (lastAtt && lastAtt.length > 0) {
+        const lastDate = new Date(lastAtt[0].date + 'T00:00:00')
+        lastDate.setDate(lastDate.getDate() + 7)
+        current.setTime(lastDate.getTime())
+      } else {
+        while (current.getDay() !== targetDay) {
+          current.setDate(current.getDate() + 1)
+        }
+      }
+
+      const newDates: string[] = []
+      while (newDates.length < creditAmount) {
+        // 確保是正確的星期幾
+        while (current.getDay() !== targetDay) {
+          current.setDate(current.getDate() + 1)
+        }
+        const dateStr = formatLocalDate(current)
+        if (!holidaySet.has(dateStr)) {
+          newDates.push(dateStr)
+        }
+        current.setDate(current.getDate() + 7)
+      }
+
+      if (newDates.length > 0) {
+        const inserts = newDates.map(date => ({
+          student_id: operatingStudent.id,
+          course_id: targetCourseId,
+          date,
+          status: '已劃位',
+          deducted: false,
+          credit_id: latestCred?.id || null,
+        }))
+        await supabase.from('attendance').insert(inserts)
+      }
+    } else if (creditAction === 'subtract') {
+      // 減堂：刪除最後 N 筆已劃位/待上課的 attendance（按日期降序）
+      const { data: deletable } = await supabase
+        .from('attendance')
+        .select('id, date, status')
+        .eq('student_id', operatingStudent.id)
+        .eq('course_id', targetCourseId)
+        .in('status', ['已劃位', '待上課'])
+        .order('date', { ascending: false })
+        .limit(creditAmount)
+
+      if (deletable && deletable.length > 0) {
+        const ids = deletable.map((a: any) => a.id)
+        await supabase.from('attendance').delete().in('id', ids)
+        if (deletable.length < creditAmount) {
+          alert(`注意：只找到 ${deletable.length} 筆可刪除的劃位記錄（需要 ${creditAmount} 筆）`)
+        }
+      } else {
+        alert('沒有可刪除的已劃位/待上課記錄')
       }
     }
 
@@ -535,10 +616,13 @@ export const AdminStudentManagement: React.FC<{
     setCreditAmount(1)
     setCreditReason('')
     setCreditCourseId('')
-    setOperatingStudent(null)
 
     // 重新載入學員資料
     await fetchStudents()
+    if (operatingStudent) {
+      fetchStudentDetail(operatingStudent.id)
+    }
+    setOperatingStudent(null)
   }
 
   const handleEnrollCourse = async (courseId: string) => {
