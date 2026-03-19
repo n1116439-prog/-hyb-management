@@ -59,7 +59,7 @@ export function SessionsPage({ courses, userRole, waitlists, userCategory }: Ses
   }[]>([])
   const [courseHolidays, setCourseHolidays] = useState<any[]>([])
   const [expandedStudentId, setExpandedStudentId] = useState<string | null>(null)
-  const [activeStudentTab, setActiveStudentTab] = useState<Record<string, 'courses' | 'records'>>({})
+  const [activeStudentTab, setActiveStudentTab] = useState<Record<string, 'courses' | 'records' | 'history'>>({})
 
   const fetchEnrollments = async (studentIds: string[], studentList: any[]) => {
     const { data: enrollments } = await supabase
@@ -165,15 +165,19 @@ export function SessionsPage({ courses, userRole, waitlists, userCategory }: Ses
             }
           }
 
+          // 用 attendance 筆數決定堂數上限，沒有 attendance 時用 totalCredits
+          const courseAttendanceCount = uniqueAttendance.length
+          const maxSessions = courseAttendanceCount > 0 ? courseAttendanceCount : totalCreditsForCourse
+
           // 生成完整日程：每週一個日期，停課跳過不算堂
           const scheduleEntries: { date: string; type: 'holiday' | 'class' | 'notice'; session: number | null; status: string; deducted: boolean }[] = []
           let sessionCount = 0
           const current = new Date(startDate)
-          const maxWeeks = totalCreditsForCourse > 0 ? totalCreditsForCourse * 3 : 52
+          const maxWeeks = maxSessions > 0 ? maxSessions * 3 : 52
           let weekCount = 0
           const todayStr = formatLocalDate(new Date())
 
-          while (sessionCount < totalCreditsForCourse && weekCount < maxWeeks) {
+          while (sessionCount < maxSessions && weekCount < maxWeeks) {
             const dateStr = formatLocalDate(current)
             weekCount++
 
@@ -312,7 +316,10 @@ export function SessionsPage({ courses, userRole, waitlists, userCategory }: Ses
       <div className="space-y-3">
         <h3 className="text-lg font-bold text-neutral-900">我的堂數</h3>
 
-        {studentCredits.map(student => (
+        {studentCredits.map(student => {
+          const totalClassCount = student.courses.reduce((sum, c) => sum + c.scheduleEntries.filter(e => e.type === 'class').length, 0)
+          const remainingBySchedule = totalClassCount - student.usedCredits
+          return (
           <div key={student.id} className="bg-white rounded-2xl border border-neutral-200 shadow-sm overflow-hidden">
             {/* 學員基本資訊（點擊展開/收合）*/}
             <div
@@ -337,14 +344,14 @@ export function SessionsPage({ courses, userRole, waitlists, userCategory }: Ses
                       </span>
                     </div>
                     <p className="text-sm text-neutral-500 mt-0.5">
-                      剩餘 <span className={`font-bold ${student.remainingCredits <= 3 && student.totalCredits > 0 ? 'text-orange-500' : 'text-primary'}`}>{student.remainingCredits}</span> 堂
-                      {student.totalCredits > 0 && ` / 共 ${student.totalCredits} 堂`}
+                      剩餘 <span className={`font-bold ${remainingBySchedule <= 3 && totalClassCount > 0 ? 'text-orange-500' : 'text-primary'}`}>{remainingBySchedule}</span> 堂
+                      {totalClassCount > 0 && ` / 共 ${totalClassCount} 堂`}
                       {' · '}{student.courses.length} 門課程
                     </p>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  {student.remainingCredits <= 3 && student.totalCredits > 0 && (
+                  {remainingBySchedule <= 3 && totalClassCount > 0 && (
                     <span className="text-xs bg-orange-50 text-orange-600 px-2 py-1 rounded-full font-medium">堂數不足</span>
                   )}
                   <svg className={`w-5 h-5 text-neutral-400 transition-transform ${expandedStudentId === student.id ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -379,6 +386,16 @@ export function SessionsPage({ courses, userRole, waitlists, userCategory }: Ses
                   >
                     課程日程
                   </button>
+                  <button
+                    onClick={() => setActiveStudentTab(prev => ({ ...prev, [student.id]: 'history' }))}
+                    className={`flex-1 py-2 text-sm font-medium text-center transition-colors ${
+                      activeStudentTab[student.id] === 'history'
+                        ? 'text-primary border-b-2 border-primary'
+                        : 'text-neutral-500'
+                    }`}
+                  >
+                    歷史紀錄
+                  </button>
                 </div>
 
                 {/* 我的課程 tab */}
@@ -411,7 +428,7 @@ export function SessionsPage({ courses, userRole, waitlists, userCategory }: Ses
                       <div>
                         <p className="text-sm text-neutral-500">堂數使用狀況（全部課程）</p>
                         <p className="text-lg font-bold">
-                          已上 <span className="text-primary">{student.usedCredits}</span> / 共 {student.totalCredits} 堂
+                          已上 <span className="text-primary">{student.usedCredits}</span> / 共 {student.courses.reduce((sum, c) => sum + c.scheduleEntries.filter(e => e.type === 'class').length, 0)} 堂
                         </p>
                       </div>
                       <div className="text-right">
@@ -427,10 +444,8 @@ export function SessionsPage({ courses, userRole, waitlists, userCategory }: Ses
                       <div className="space-y-1">
                         {student.courses.map(course => {
                           const classEntries = course.scheduleEntries.filter(e => e.type === 'class')
-                          const attended = classEntries.filter(e => e.deducted).length
-                          const totalForCourse = course.scheduleEntries.filter(e => e.type === 'class' || e.type === 'notice').length > 0
-                            ? course.scheduleEntries.filter(e => e.session !== null).reduce((max, e) => Math.max(max, e.session || 0), 0)
-                            : 0
+                          const attended = classEntries.filter(e => ['出席', '缺席', '遲到'].includes(e.status)).length
+                          const totalForCourse = classEntries.length
                           const leaveCount = classEntries.filter(e => ['請假', '病假'].includes(e.status)).length
                           const absentCount = classEntries.filter(e => e.status === '缺席').length
                           return (
@@ -535,17 +550,55 @@ export function SessionsPage({ courses, userRole, waitlists, userCategory }: Ses
                   </div>
                 )}
 
+                {/* 歷史紀錄 tab */}
+                {activeStudentTab[student.id] === 'history' && (
+                  <div className="p-4 space-y-1">
+                    {(() => {
+                      const historyRecords = student.attendance.filter(a => !['已劃位', '待上課'].includes(a.status))
+                      if (historyRecords.length === 0) {
+                        return <div className="text-center py-6 text-neutral-400 text-sm">尚無上課紀錄</div>
+                      }
+                      const statusStyles: Record<string, string> = {
+                        '出席': 'bg-green-50 text-green-600 border border-green-200',
+                        '缺席': 'bg-red-50 text-red-600 border border-red-200',
+                        '請假': 'bg-yellow-50 text-yellow-600 border border-yellow-200',
+                        '遲到': 'bg-orange-50 text-orange-600 border border-orange-200',
+                        '病假': 'bg-blue-50 text-blue-600 border border-blue-200',
+                      }
+                      const weekdays = ['日', '一', '二', '三', '四', '五', '六']
+                      return historyRecords.map((record, idx) => {
+                        const d = new Date(record.date + 'T00:00:00')
+                        const weekday = `週${weekdays[d.getDay()]}`
+                        return (
+                          <div key={idx} className="flex items-center justify-between p-2 rounded-lg hover:bg-neutral-50">
+                            <div className="flex items-center gap-3">
+                              <span className="text-sm text-neutral-900">{record.date} {weekday}</span>
+                              <span className="text-xs text-neutral-400">{record.courseName}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              {record.deducted && <span className="text-xs text-neutral-400">-1堂</span>}
+                              <span className={`text-xs px-2 py-1 rounded-full font-medium ${statusStyles[record.status] || 'bg-neutral-50 text-neutral-500'}`}>
+                                {record.status}
+                              </span>
+                            </div>
+                          </div>
+                        )
+                      })
+                    })()}
+                  </div>
+                )}
+
                 {/* 堂數進度條 */}
-                {student.totalCredits > 0 && (
+                {totalClassCount > 0 && (
                   <div className="px-4 py-3 border-t border-neutral-100 bg-neutral-50">
                     <div className="flex justify-between text-xs text-neutral-500 mb-1">
                       <span>堂數使用進度</span>
-                      <span>{student.usedCredits} / {student.totalCredits}</span>
+                      <span>{student.usedCredits} / {totalClassCount}</span>
                     </div>
                     <div className="w-full bg-neutral-200 rounded-full h-1.5">
                       <div
-                        className={`h-1.5 rounded-full ${student.remainingCredits <= 3 ? 'bg-orange-500' : 'bg-primary'}`}
-                        style={{ width: `${(student.usedCredits / student.totalCredits) * 100}%` }}
+                        className={`h-1.5 rounded-full ${remainingBySchedule <= 3 ? 'bg-orange-500' : 'bg-primary'}`}
+                        style={{ width: `${(student.usedCredits / totalClassCount) * 100}%` }}
                       />
                     </div>
                   </div>
@@ -553,7 +606,8 @@ export function SessionsPage({ courses, userRole, waitlists, userCategory }: Ses
               </div>
             )}
           </div>
-        ))}
+          )
+        })}
 
         {studentCredits.length === 0 && (
           <div className="text-center py-8 text-neutral-500">
