@@ -283,7 +283,7 @@ export const RegisterPage: React.FC<{ courses: Course[]; initialCourseId?: strin
           .from('credits')
           .select('id, total_credits, remaining_credits')
           .eq('student_id', studentId)
-          .eq('course_id', formData.courseId)
+          .eq('status', 'active')
           .maybeSingle()
 
 
@@ -302,7 +302,6 @@ export const RegisterPage: React.FC<{ courses: Course[]; initialCourseId?: strin
         } else {
           const { error: creditError } = await supabase.from('credits').insert({
             student_id: studentId,
-            course_id: formData.courseId,
             total_credits: creditSessions,
             used_credits: 0,
             leave_count: 0,

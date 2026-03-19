@@ -950,30 +950,15 @@ const CourseAttendanceTab: React.FC<{
 
     const newUsed = attCount?.length || 0;
 
-    // 先嘗試更新對應 course_id 的 credit
-    const { data: courseCred } = await supabase
+    const { data: studentCred } = await supabase
       .from('credits')
       .select('id')
       .eq('student_id', studentId)
-      .eq('course_id', courseId)
       .eq('status', 'active')
       .limit(1);
 
-    if (courseCred && courseCred.length > 0) {
-      await supabase.from('credits').update({ used_credits: newUsed }).eq('id', courseCred[0].id);
-    } else {
-      // fallback: 通用 credit（course_id IS NULL）
-      const { data: generalCred } = await supabase
-        .from('credits')
-        .select('id')
-        .eq('student_id', studentId)
-        .is('course_id', null)
-        .eq('status', 'active')
-        .limit(1);
-
-      if (generalCred && generalCred.length > 0) {
-        await supabase.from('credits').update({ used_credits: newUsed }).eq('id', generalCred[0].id);
-      }
+    if (studentCred && studentCred.length > 0) {
+      await supabase.from('credits').update({ used_credits: newUsed }).eq('id', studentCred[0].id);
     }
   };
 

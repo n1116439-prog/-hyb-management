@@ -260,8 +260,7 @@ export const AdminStudentManagement: React.FC<{
         .filter((h: any) => h.course_id === courseId || h.course_id === null)
         .forEach((h: any) => { holidayMap[h.date] = h.reason || '停課' })
 
-      const courseCred = (credits || []).find((c: any) => c.course_id === courseId)
-        || (credits || []).find((c: any) => !c.course_id)
+      const courseCred = (credits || []).find((c: any) => c.status === 'active')
       const totalCredits = courseCred?.total_credits || 0
 
       const sortedAtt = attendanceList.map((a: any) => a.date).sort()
@@ -428,12 +427,11 @@ export const AdminStudentManagement: React.FC<{
       return
     }
 
-    // 從資料庫即時讀取最新 credits（匹配 course_id）
+    // 從資料庫即時讀取最新 credits
     const { data: credits } = await supabase
       .from('credits')
       .select('*')
       .eq('student_id', operatingStudent.id)
-      .eq('course_id', targetCourseId)
       .eq('status', 'active')
 
     const credit = credits?.[0]
@@ -463,7 +461,8 @@ export const AdminStudentManagement: React.FC<{
 
       const { error } = await supabase.from('credits').insert({
         student_id: operatingStudent.id,
-        course_id: targetCourseId,
+        plan_name: '管理員手動新增',
+        purchase_date: formatLocalDate(new Date()),
         total_credits: creditAmount,
         used_credits: 0,
         leave_count: 0,

@@ -142,10 +142,8 @@ export function SessionsPage({ courses, userRole, waitlists, userCategory }: Ses
               holidayMap[h.date] = h.reason || '停課'
             })
 
-          // 找到該學員在這門課的 credit
-          const courseCred = studentCreds.find((c: any) => c.course_id === courseId)
-          const generalCred = studentCreds.find((c: any) => !c.course_id)
-          const selectedCred = courseCred || generalCred
+          // 找到該學員的 credit
+          const selectedCred = studentCreds.find((c: any) => c.status === 'active')
           const totalCreditsForCourse = selectedCred?.total_credits || 0
 
           // 起始日期：優先 attendance 最早日期 → enrolled_at → 今天
