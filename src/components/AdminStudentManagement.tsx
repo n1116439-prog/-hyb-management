@@ -97,7 +97,7 @@ export const AdminStudentManagement: React.FC<{
         usedCredits: studentCredits.reduce((sum: number, c: any) => sum + (c.used_credits || 0), 0),
         remainingCredits: studentCredits.reduce((sum: number, c: any) => sum + (c.remaining_credits || 0), 0),
         // 繳費狀態
-        paymentStatus: totalPaid > 0 ? '已繳費' : '尚未繳費',
+        paymentStatus: s.payment_status || '尚未繳費',
         totalPaid,
       }
     }))
@@ -734,11 +734,16 @@ export const AdminStudentManagement: React.FC<{
     return matchSearch && matchStatus && matchCategory;
   });
 
-  const handleConfirmPayment = (id: string) => {
-    // TODO: integrate with payments table
-    setStudents(prev => prev.map(s => s.id === id ? { ...s, paymentStatus: '已繳費' } : s));
-    if (selectedStudent?.id === id) {
-      setSelectedStudent(prev => prev ? { ...prev, paymentStatus: '已繳費' } : null);
+  const handleConfirmPayment = async (id: string) => {
+    const { error } = await supabase
+      .from('students')
+      .update({ payment_status: '已繳費' })
+      .eq('id', id)
+    if (!error) {
+      await fetchStudents()
+      if (selectedStudent?.id === id) {
+        setSelectedStudent((prev: any) => prev ? { ...prev, paymentStatus: '已繳費' } : null)
+      }
     }
   };
 
@@ -759,6 +764,7 @@ export const AdminStudentManagement: React.FC<{
       emergency_contact: editForm.emergencyContact,
       emergency_phone: editForm.emergencyPhone,
       notes: editForm.notes,
+      payment_status: editForm.paymentStatus,
     }).eq('id', editForm.id)
     if (!error) await fetchStudents()
     await logStudentActivity(editForm.id, 'info_updated', {
