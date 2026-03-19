@@ -942,13 +942,6 @@ export const AdminStudentManagement: React.FC<{
                       <ChevronRight size={16} />
                     </button>
                     <button
-                      onClick={() => handleConfirmPayment(student.id)}
-                      className="w-9 h-9 flex items-center justify-center rounded-xl bg-neutral-50 text-neutral-400 hover:bg-primary/10 hover:text-primary transition-colors"
-                      title="確認繳費"
-                    >
-                      <CreditCard size={16} />
-                    </button>
-                    <button
                       onClick={() => handleDeleteStudent(student.id)}
                       className="w-9 h-9 flex items-center justify-center rounded-xl bg-neutral-50 text-neutral-400 hover:bg-danger/10 hover:text-danger transition-colors"
                       title="刪除學員"
@@ -1078,6 +1071,14 @@ export const AdminStudentManagement: React.FC<{
                         <p className="text-xs text-neutral-500">累計繳費：NT$ {selectedStudent.totalPaid.toLocaleString()}</p>
                       )}
                     </div>
+                    {selectedStudent.paymentStatus !== '已繳費' && (
+                      <button
+                        onClick={() => handleConfirmPayment(selectedStudent.id)}
+                        className="mt-2 w-full py-2 bg-emerald-500 text-white text-sm font-bold rounded-xl hover:bg-emerald-600 transition-colors"
+                      >
+                        確認收款
+                      </button>
+                    )}
                   </div>
                 </div>
 
