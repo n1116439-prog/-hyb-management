@@ -10,7 +10,6 @@ function formatLocalDate(date: Date): string {
 import { Check, ChevronRight, User, Calendar, Clock, MapPin, ArrowLeft, DollarSign, CreditCard } from 'lucide-react';
 import { Course } from '../types';
 import { supabase } from '../lib/supabase';
-import { generateAttendanceRecords } from '../lib/attendanceUtils';
 import { Button, FormField, Badge } from './UI';
 
 export const RegisterPage: React.FC<{ courses: Course[]; initialCourseId?: string; onComplete: () => void; onRefreshCourses?: () => void; userRole: 'user' | 'admin' | 'student'; userCategory?: 'child' | 'adult' | '' }> = ({ courses, initialCourseId, onComplete, onRefreshCourses, userRole, userCategory }) => {
@@ -254,7 +253,11 @@ export const RegisterPage: React.FC<{ courses: Course[]; initialCourseId?: strin
 
         if (enrollError) {
           console.error('報名失敗:', enrollError);
-          alert('報名失敗：' + enrollError.message);
+          if (enrollError.code === '23505') {
+            alert('此學員已報名過此課程');
+          } else {
+            alert('報名失敗：' + enrollError.message);
+          }
           return;
         }
       }
@@ -307,6 +310,8 @@ export const RegisterPage: React.FC<{ courses: Course[]; initialCourseId?: strin
             leave_count: 0,
             max_leave: planMaxLeave,
             plan_weeks: planWeeks,
+            plan_name: selectedPlanForCredits?.name || '報名方案',
+            purchase_date: formatLocalDate(new Date()),
             expiry_date: formatLocalDate(expiryDate),
             status: 'active',
           })
@@ -314,9 +319,57 @@ export const RegisterPage: React.FC<{ courses: Course[]; initialCourseId?: strin
         }
       }
 
-      // 為每位學員自動建立待上課的 attendance 記錄
+      // 為每位學員自動建立已劃位的 attendance 記錄
+      const courseForAtt = courses.find(c => c.id === formData.courseId);
+      const dayMap: Record<string, number> = { '週日': 0, '週一': 1, '週二': 2, '週三': 3, '週四': 4, '週五': 5, '週六': 6 };
+      const targetDay = courseForAtt ? dayMap[courseForAtt.schedule] : undefined;
+
+      // 讀取停課日（含 course_id=null 全域停課）
+      const { data: holidayData } = await supabase
+        .from('course_holidays')
+        .select('date')
+        .or(`course_id.eq.${formData.courseId},course_id.is.null`);
+      const holidaySet = new Set((holidayData || []).map(h => h.date));
+
+      const creditSessions = (selectedPlanForCredits?.sessions || 1) + bonusSessions;
+
       for (const studentId of selectedStudentIds) {
-        await generateAttendanceRecords(studentId, formData.courseId)
+        // 取得該學員的 credit_id
+        const { data: creditRow } = await supabase
+          .from('credits')
+          .select('id')
+          .eq('student_id', studentId)
+          .eq('status', 'active')
+          .limit(1)
+          .single();
+
+        if (targetDay !== undefined) {
+          const dates: string[] = [];
+          const current = new Date();
+          // 找到下一個目標星期幾
+          while (current.getDay() !== targetDay) {
+            current.setDate(current.getDate() + 1);
+          }
+          while (dates.length < creditSessions) {
+            const dateStr = formatLocalDate(current);
+            if (!holidaySet.has(dateStr)) {
+              dates.push(dateStr);
+            }
+            current.setDate(current.getDate() + 7);
+          }
+
+          if (dates.length > 0) {
+            const inserts = dates.map(date => ({
+              student_id: studentId,
+              course_id: formData.courseId,
+              date,
+              status: '已劃位',
+              deducted: false,
+              credit_id: creditRow?.id || null,
+            }));
+            await supabase.from('attendance').insert(inserts);
+          }
+        }
       }
 
       // 寫入付款紀錄
