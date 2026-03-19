@@ -240,6 +240,63 @@ export const RegisterPage: React.FC<{ courses: Course[]; initialCourseId?: strin
 
   const handleSubmit = async () => {
     try {
+      if (formData.type === 'trial') {
+        // 防重複：查詢是否已有進行中的試上申請
+        for (const studentId of selectedStudentIds) {
+          const { data: existingTrial } = await supabase
+            .from('trial_bookings')
+            .select('id')
+            .eq('student_id', studentId)
+            .in('status', ['待確認', '已確認'])
+            .maybeSingle()
+
+          if (existingTrial) {
+            alert('此學員已有進行中的試上申請，每位學員僅能試上一次。如需更改時間，請聯絡管理員。')
+            return
+          }
+
+          // 寫入 trial_bookings
+          const { error } = await supabase.from('trial_bookings').insert({
+            student_id: studentId,
+            course_id: formData.courseId,
+            trial_date: formData.trialDate,
+            status: '待確認',
+            notes: formData.note || '',
+          })
+
+          if (error) {
+            alert('試上申請失敗：' + error.message)
+            return
+          }
+        }
+
+        // 寫入付款紀錄（試上費用）
+        await supabase.from('payments').insert({
+          student_id: selectedStudentIds[0],
+          amount: finalPrice,
+          payment_method: '轉帳',
+          description: `試上課程 - ${selectedCourse?.name || ''}`,
+        })
+
+        // 優惠碼處理
+        if (promoResult) {
+          await supabase.from('promo_codes').update({
+            current_uses: promoResult.current_uses + 1
+          }).eq('id', promoResult.id)
+          await supabase.from('promo_code_usage').insert({
+            promo_code_id: promoResult.id,
+            student_id: selectedStudentIds[0],
+            discount_amount: discountAmount,
+            original_amount: totalPrice,
+            final_amount: finalPrice,
+          })
+        }
+
+        onRefreshCourses?.()
+        setShowCheckout(true)
+        return  // 不繼續執行正式報名流程
+      }
+
       // 為每位選擇的學員建立報名紀錄
       for (const studentId of selectedStudentIds) {
         const { error: enrollError } = await supabase

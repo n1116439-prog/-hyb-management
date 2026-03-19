@@ -58,6 +58,7 @@ export function SessionsPage({ courses, userRole, waitlists, userCategory }: Ses
     }[]
   }[]>([])
   const [courseHolidays, setCourseHolidays] = useState<any[]>([])
+  const [trialBookings, setTrialBookings] = useState<any[]>([])
   const [expandedStudentId, setExpandedStudentId] = useState<string | null>(null)
   const [activeStudentTab, setActiveStudentTab] = useState<Record<string, 'courses' | 'records' | 'history'>>({})
 
@@ -251,6 +252,27 @@ export function SessionsPage({ courses, userRole, waitlists, userCategory }: Ses
     }))
   }
 
+  const fetchTrialBookings = async () => {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+
+    const { data: students } = await supabase
+      .from('students')
+      .select('id')
+      .eq('parent_uid', user.id)
+
+    if (!students || students.length === 0) return
+    const studentIds = students.map((s: any) => s.id)
+
+    const { data } = await supabase
+      .from('trial_bookings')
+      .select('*, courses(name, day_of_week, start_time, end_time, venues(name))')
+      .in('student_id', studentIds)
+      .order('trial_date', { ascending: true })
+
+    setTrialBookings(data || [])
+  }
+
   const fetchSessions = async () => {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
@@ -276,6 +298,7 @@ export function SessionsPage({ courses, userRole, waitlists, userCategory }: Ses
 
   useEffect(() => {
     fetchSessions()
+    fetchTrialBookings()
 
     // 訂閱 credits 變化，自動刷新
     const channel = supabase
@@ -622,6 +645,41 @@ export function SessionsPage({ courses, userRole, waitlists, userCategory }: Ses
           購買堂數
         </button>
       </div>
+
+      {/* 試上申請 */}
+      {trialBookings.length > 0 && (
+        <div className="space-y-3">
+          <h3 className="text-sm font-bold text-neutral-500">試上申請</h3>
+          {trialBookings.map((trial: any) => {
+            const statusColors: Record<string, string> = {
+              '待確認': 'bg-yellow-50 text-yellow-700 border-yellow-200',
+              '已確認': 'bg-blue-50 text-blue-700 border-blue-200',
+              '已試上': 'bg-green-50 text-green-700 border-green-200',
+              '已取消': 'bg-neutral-50 text-neutral-400 border-neutral-200',
+            }
+            const weekdays = ['日', '一', '二', '三', '四', '五', '六']
+            const d = new Date(trial.trial_date + 'T00:00:00')
+            const dateStr = `${trial.trial_date} (${weekdays[d.getDay()]})`
+            return (
+              <div key={trial.id} className={`p-4 rounded-2xl border ${statusColors[trial.status] || 'bg-neutral-50 border-neutral-200'}`}>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="font-bold text-sm">{trial.courses?.name}</p>
+                    <p className="text-xs mt-0.5">{dateStr} · {trial.courses?.start_time?.slice(0,5)}-{trial.courses?.end_time?.slice(0,5)}</p>
+                    {trial.courses?.venues?.name && (
+                      <p className="text-xs mt-0.5">{trial.courses.venues.name}</p>
+                    )}
+                  </div>
+                  <span className="text-xs font-bold px-2 py-1 rounded-full border">{trial.status}</span>
+                </div>
+                {trial.status === '待確認' && (
+                  <p className="text-xs mt-2 opacity-70">管理員確認後將通知您，如需更改時間請聯絡我們</p>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
 
       {/* 候補狀態 */}
       {waitlists.length > 0 && (
