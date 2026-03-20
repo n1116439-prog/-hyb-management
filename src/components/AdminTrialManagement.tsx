@@ -29,6 +29,8 @@ export const AdminTrialManagement: React.FC<{ courses?: any[] }> = ({ courses: p
   const [enrollModalBooking, setEnrollModalBooking] = useState<any>(null)
   const [enrollCredits, setEnrollCredits] = useState(8)
   const [enrolling, setEnrolling] = useState(false)
+  const [plans, setPlans] = useState<any[]>([])
+  const [selectedPlanId, setSelectedPlanId] = useState<string>('')
 
   const fetchBookings = async () => {
     setLoading(true)
@@ -50,9 +52,19 @@ export const AdminTrialManagement: React.FC<{ courses?: any[] }> = ({ courses: p
     setAllCourses(data || [])
   }
 
+  const fetchPlans = async () => {
+    const { data } = await supabase
+      .from('course_plans')
+      .select('*')
+      .eq('is_active', true)
+      .order('sort_order')
+    if (data) setPlans(data)
+  }
+
   useEffect(() => {
     fetchBookings()
     fetchCourses()
+    fetchPlans()
   }, [])
 
   const updateStatus = async (id: string, status: string) => {
@@ -344,7 +356,7 @@ export const AdminTrialManagement: React.FC<{ courses?: any[] }> = ({ courses: p
                   )}
                   {(booking.status === '已確認' || booking.status === '已試上') && (
                     <button
-                      onClick={() => { setEnrollModalBooking(booking); setEnrollCredits(8) }}
+                      onClick={() => { setEnrollModalBooking(booking); setEnrollCredits(8); setSelectedPlanId('') }}
                       className="px-3 py-1.5 text-xs font-medium bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 transition-colors flex items-center gap-1"
                     >
                       <UserPlus size={12} /> 代理報名
@@ -366,20 +378,36 @@ export const AdminTrialManagement: React.FC<{ courses?: any[] }> = ({ courses: p
               <p><span className="text-neutral-500">學員：</span>{enrollModalBooking.students?.name}</p>
               <p><span className="text-neutral-500">班級：</span>{enrollModalBooking.courses?.name}</p>
             </div>
-            <div className="space-y-1">
-              <label className="text-sm font-medium text-neutral-700">購買堂數</label>
-              <input
-                type="number"
-                min={1}
-                value={enrollCredits}
-                onChange={e => setEnrollCredits(Number(e.target.value))}
-                className="w-full px-4 py-2 border border-neutral-300 rounded-xl text-sm"
-              />
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-neutral-700">選擇方案</label>
+              <div className="space-y-2 max-h-60 overflow-y-auto">
+                {plans.map(plan => {
+                  const isSelected = selectedPlanId === plan.id
+                  return (
+                    <button
+                      key={plan.id}
+                      onClick={() => { setSelectedPlanId(plan.id); setEnrollCredits(plan.sessions) }}
+                      className={'w-full p-3 rounded-xl border-2 text-left transition-all ' + (isSelected ? 'border-emerald-500 bg-emerald-50' : 'border-neutral-200 hover:border-neutral-300')}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="font-bold text-sm text-neutral-900">{plan.name}</p>
+                          <p className="text-xs text-neutral-500">{plan.sessions} 堂 · {plan.description || ''}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="font-bold text-emerald-600">NT$ {(plan.price_per_session * plan.sessions).toLocaleString()}</p>
+                          <p className="text-xs text-neutral-400">{plan.price_per_session}/堂</p>
+                        </div>
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
             </div>
             <div className="flex gap-3">
               <button
                 onClick={handleEnroll}
-                disabled={enrolling}
+                disabled={enrolling || !selectedPlanId}
                 className="flex-1 py-3 bg-emerald-500 text-white font-bold rounded-xl hover:bg-emerald-600 transition-colors disabled:opacity-50"
               >
                 {enrolling ? '處理中...' : '確認報名'}

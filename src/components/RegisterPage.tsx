@@ -761,14 +761,21 @@ export const RegisterPage: React.FC<{ courses: Course[]; initialCourseId?: strin
             className="space-y-8"
           >
             <div className="space-y-6">
-              <div className="bg-blue-50 rounded-lg px-4 py-2 text-sm text-blue-700">
-                已選 {selectedStudents.length} 位{isMixed ? '混合' : autoCategory === 'adult' ? '成人' : '兒童'}學員，顯示對應班級
-              </div>
+              {isMixed ? (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-sm text-amber-700">
+                  <p className="font-bold">⚠️ 您同時選擇了成人與兒童學員</p>
+                  <p className="mt-1">成人與兒童的課程方案與費用不同，建議分開報名。請返回上一步調整。</p>
+                </div>
+              ) : (
+                <div className="bg-blue-50 rounded-lg px-4 py-2 text-sm text-blue-700">
+                  已選 {selectedStudents.length} 位{autoCategory === 'adult' ? '成人' : '兒童'}學員，顯示對應{autoCategory === 'adult' ? '成人' : '兒童'}班級與方案
+                </div>
+              )}
 
               <FormField label="選擇報名方案">
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
 
-                  {plans.filter(p => p.category === 'all' || p.category === autoCategory).map(plan => (
+                  {plans.filter(p => p.category === autoCategory).map(plan => (
                     <button
                       key={plan.id}
                       onClick={() => setFormData({
@@ -930,7 +937,7 @@ export const RegisterPage: React.FC<{ courses: Course[]; initialCourseId?: strin
               </FormField>
             </div>
             <div className="flex flex-col gap-3">
-              <Button onClick={handleNext} icon={ChevronRight}>下一步：確認報名資料</Button>
+              <Button onClick={handleNext} icon={ChevronRight} disabled={isMixed}>下一步：確認報名資料</Button>
               <Button variant="ghost" onClick={handleBack}>上一步</Button>
             </div>
           </motion.div>
