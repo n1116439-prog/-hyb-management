@@ -34,7 +34,7 @@ export const AdminTrialManagement: React.FC<{ courses?: any[] }> = ({ courses: p
     setLoading(true)
     const { data, error } = await supabase
       .from('trial_bookings')
-      .select('*, students(id, name, phone, student_code), courses(id, name, day_of_week, start_time, end_time, venues(name))')
+      .select('*, students(id, name, phone, student_code, student_number), courses(id, name, day_of_week, start_time, end_time, venues(name))')
       .order('created_at', { ascending: false })
     console.log('trial_bookings data:', data, 'error:', error)
     setBookings(data || [])
@@ -247,7 +247,7 @@ export const AdminTrialManagement: React.FC<{ courses?: any[] }> = ({ courses: p
                     <div className="flex items-center gap-2">
                       <p className="font-bold text-neutral-900">{student?.name || '未知學員'}</p>
                       <span className="text-xs bg-neutral-100 text-neutral-600 px-2 py-0.5 rounded-full">
-                        {student?.student_code || ''}
+                        {student?.student_code || student?.student_number || '未編號'}
                       </span>
                     </div>
                     <div className="flex items-center gap-3 text-sm text-neutral-500">
