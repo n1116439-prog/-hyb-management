@@ -511,17 +511,12 @@ export const AdminStudentManagement: React.FC<{
       }
     }
 
-    // === 重新計算 credits（從 attendance COUNT） ===
-    const { count: totalCount } = await supabase.from('attendance').select('*', { count: 'exact', head: true }).eq('student_id', operatingStudent.id)
-    const { count: usedCount } = await supabase.from('attendance').select('*', { count: 'exact', head: true }).eq('student_id', operatingStudent.id).eq('deducted', true)
-
-    const { data: activeCred } = await supabase.from('credits').select('id').eq('student_id', operatingStudent.id).eq('status', 'active').limit(1)
-    if (activeCred && activeCred.length > 0) {
-      await supabase.from('credits').update({
-        total_credits: totalCount || 0,
-        used_credits: usedCount || 0,
-      }).eq('id', activeCred[0].id)
-    }
+    // === 更新 credits（直接加減） ===
+    const delta = creditAction === 'add' ? creditAmount : -creditAmount
+    await supabase.from('credits').update({
+      total_credits: Math.max(0, (credit.total_credits || 0) + delta),
+      remaining_credits: Math.max(0, (credit.remaining_credits || 0) + delta),
+    }).eq('id', credit.id)
 
     // 寫入操作日誌
     const { data: { user } } = await supabase.auth.getUser()
