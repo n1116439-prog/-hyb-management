@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Layout } from './components/Layout';
 import { CourseOverviewPage } from './components/CourseOverviewPage';
 import { SessionsPage } from './components/SessionsPage';
@@ -21,6 +21,137 @@ import { BottomSheet } from './components/BottomSheet';
 
 import { Session, WaitlistEntry, Course, VenueContract } from './types';
 import { supabase } from './lib/supabase';
+
+/* ── iOS-style wheel column ── */
+const ITEM_HEIGHT = 40
+const VISIBLE_COUNT = 5
+
+const WheelColumn: React.FC<{
+  items: { value: string; label: string }[]
+  selectedValue: string
+  onChange: (v: string) => void
+}> = ({ items, selectedValue, onChange }) => {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const isUserScroll = useRef(true)
+
+  const scrollToValue = useCallback((val: string, smooth = false) => {
+    const idx = items.findIndex(i => i.value === val)
+    if (idx < 0 || !containerRef.current) return
+    isUserScroll.current = false
+    containerRef.current.scrollTo({ top: idx * ITEM_HEIGHT, behavior: smooth ? 'smooth' : 'auto' })
+    setTimeout(() => { isUserScroll.current = true }, 120)
+  }, [items])
+
+  useEffect(() => { scrollToValue(selectedValue) }, [selectedValue, scrollToValue])
+
+  const handleScroll = () => {
+    if (!isUserScroll.current) return
+    if (timerRef.current) clearTimeout(timerRef.current)
+    timerRef.current = setTimeout(() => {
+      if (!containerRef.current) return
+      const idx = Math.round(containerRef.current.scrollTop / ITEM_HEIGHT)
+      const clamped = Math.max(0, Math.min(idx, items.length - 1))
+      containerRef.current.scrollTo({ top: clamped * ITEM_HEIGHT, behavior: 'smooth' })
+      if (items[clamped] && items[clamped].value !== selectedValue) onChange(items[clamped].value)
+    }, 80)
+  }
+
+  const padH = ((VISIBLE_COUNT - 1) / 2) * ITEM_HEIGHT
+
+  return (
+    <div className="relative" style={{ height: VISIBLE_COUNT * ITEM_HEIGHT }}>
+      <div className="absolute inset-x-0 top-0 h-[40%] bg-gradient-to-b from-white to-transparent z-10 pointer-events-none" />
+      <div className="absolute inset-x-0 bottom-0 h-[40%] bg-gradient-to-t from-white to-transparent z-10 pointer-events-none" />
+      <div className="absolute inset-x-2 z-10 pointer-events-none border-t border-b border-neutral-200" style={{ top: padH, height: ITEM_HEIGHT }} />
+      <div
+        ref={containerRef}
+        onScroll={handleScroll}
+        className="h-full overflow-y-auto"
+        style={{ scrollSnapType: 'y mandatory', scrollbarWidth: 'none', msOverflowStyle: 'none' } as React.CSSProperties}
+      >
+        <div style={{ height: padH }} />
+        {items.map(item => {
+          const active = item.value === selectedValue
+          return (
+            <div
+              key={item.value}
+              style={{ height: ITEM_HEIGHT, scrollSnapAlign: 'start' }}
+              className={`flex items-center justify-center text-sm transition-colors ${active ? 'text-neutral-900 font-semibold' : 'text-neutral-400'}`}
+            >
+              {item.label}
+            </div>
+          )
+        })}
+        <div style={{ height: padH }} />
+      </div>
+      <style>{`div::-webkit-scrollbar { display: none; }`}</style>
+    </div>
+  )
+}
+
+/* ── Register date wheel picker ── */
+const RegisterDateWheelPicker: React.FC<{
+  value: string
+  onChange: (dateStr: string) => void
+  label?: string
+}> = ({ value, onChange, label }) => {
+  const currentYear = 2024
+  const minYear = 1950
+
+  const parseDate = (v: string) => {
+    if (!v) return { y: '2010', m: '01', d: '01' }
+    const [y, m, d] = v.split('-')
+    return { y: y || '2010', m: m || '01', d: d || '01' }
+  }
+
+  const parsed = parseDate(value)
+  const [year, setYear] = useState(parsed.y)
+  const [month, setMonth] = useState(parsed.m)
+  const [day, setDay] = useState(parsed.d)
+
+  useEffect(() => {
+    const p = parseDate(value)
+    setYear(p.y)
+    setMonth(p.m)
+    setDay(p.d)
+  }, [value])
+
+  useEffect(() => {
+    const daysInMonth = new Date(Number(year), Number(month), 0).getDate()
+    const clampedDay = Number(day) > daysInMonth ? String(daysInMonth).padStart(2, '0') : day
+    const dateStr = `${year}-${month}-${clampedDay}`
+    if (dateStr !== value) onChange(dateStr)
+  }, [year, month, day])
+
+  const years = Array.from({ length: currentYear - minYear + 1 }, (_, i) => {
+    const y = String(currentYear - i)
+    return { value: y, label: y + '年' }
+  })
+  const months = Array.from({ length: 12 }, (_, i) => {
+    const m = String(i + 1).padStart(2, '0')
+    return { value: m, label: (i + 1) + '月' }
+  })
+  const daysInMonth = new Date(Number(year), Number(month), 0).getDate()
+  const days = Array.from({ length: daysInMonth }, (_, i) => {
+    const d = String(i + 1).padStart(2, '0')
+    return { value: d, label: (i + 1) + '日' }
+  })
+
+  return (
+    <div>
+      {label && <p className="text-xs font-medium text-neutral-500 mb-1">{label}</p>}
+      <div className="bg-white rounded-xl border border-neutral-200 p-3">
+        <div className="flex gap-1">
+          <div className="flex-[1.2]"><WheelColumn items={years} selectedValue={year} onChange={setYear} /></div>
+          <div className="flex-1"><WheelColumn items={months} selectedValue={month} onChange={setMonth} /></div>
+          <div className="flex-1"><WheelColumn items={days} selectedValue={day} onChange={setDay} /></div>
+        </div>
+        <p className="text-center text-xs text-neutral-400 mt-2">{year}/{month}/{day}</p>
+      </div>
+    </div>
+  )
+}
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('home');
@@ -816,25 +947,21 @@ export default function App() {
                       <Input placeholder="請填寫學員真實姓名" value={student.name} onChange={e => updateStudent(index, 'name', e.target.value)} />
                     </FormField>
 
-                    <div className="flex gap-3">
-                      <div className="flex-1">
-                        <FormField label="出生日期">
-                          <Input type="date" value={student.birthDate} onChange={e => updateStudent(index, 'birthDate', e.target.value)} />
-                        </FormField>
+                    <RegisterDateWheelPicker
+                      label="出生日期"
+                      value={student.birthDate || '2010-01-01'}
+                      onChange={(dateStr) => updateStudent(index, 'birthDate', dateStr)}
+                    />
+                    <FormField label="性別">
+                      <div className="flex gap-1">
+                        {['男', '女'].map(g => (
+                          <button key={g} type="button" onClick={() => updateStudent(index, 'gender', g)}
+                            className={'flex-1 py-2 text-xs font-medium rounded-lg border transition-colors ' + (student.gender === g ? 'bg-primary text-white border-primary' : 'bg-white text-neutral-600 border-neutral-300')}>
+                            {g}
+                          </button>
+                        ))}
                       </div>
-                      <div className="flex-1">
-                        <FormField label="性別">
-                          <div className="flex gap-1">
-                            {['男', '女'].map(g => (
-                              <button key={g} type="button" onClick={() => updateStudent(index, 'gender', g)}
-                                className={'flex-1 py-2 text-xs font-medium rounded-lg border transition-colors ' + (student.gender === g ? 'bg-primary text-white border-primary' : 'bg-white text-neutral-600 border-neutral-300')}>
-                                {g}
-                              </button>
-                            ))}
-                          </div>
-                        </FormField>
-                      </div>
-                    </div>
+                    </FormField>
 
                     <FormField label="程度">
                       <div className="flex flex-wrap gap-2">
