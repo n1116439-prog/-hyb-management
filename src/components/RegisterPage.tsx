@@ -7,7 +7,7 @@ function formatLocalDate(date: Date): string {
   const day = String(date.getDate()).padStart(2, '0')
   return `${year}-${month}-${day}`
 }
-import { Check, ChevronRight, User, Calendar, Clock, MapPin, ArrowLeft, DollarSign, CreditCard } from 'lucide-react';
+import { Check, ChevronRight, User, Calendar, Clock, MapPin, DollarSign, CreditCard } from 'lucide-react';
 import { Course } from '../types';
 import { supabase } from '../lib/supabase';
 import { Button, FormField, Badge } from './UI';
@@ -36,8 +36,8 @@ export const RegisterPage: React.FC<{ courses: Course[]; initialCourseId?: strin
 
   const [errors, setErrors] = useState<Set<string>>(new Set());
   const [agreed, setAgreed] = useState(false);
-  const [calendarYear, setCalendarYear] = useState(() => new Date().getFullYear());
-  const [calendarMonth, setCalendarMonth] = useState(() => new Date().getMonth());
+  const [trialDateSlots, setTrialDateSlots] = useState<{date: string, weekday: string, enrolled: number, maxStudents: number, available: boolean}[]>([])
+  const [loadingSlots, setLoadingSlots] = useState(false)
 
   const [paymentInfo, setPaymentInfo] = useState({
     bank_name: '中國信託',
@@ -106,6 +106,102 @@ export const RegisterPage: React.FC<{ courses: Course[]; initialCourseId?: strin
     }
     fetchMyStudents()
   }, []);
+
+  const fetchTrialSlots = async (courseId: string) => {
+    setLoadingSlots(true)
+    setTrialDateSlots([])
+
+    const { data: course } = await supabase
+      .from('courses')
+      .select('day_of_week, max_students')
+      .eq('id', courseId)
+      .single()
+
+    if (!course) { setLoadingSlots(false); return }
+
+    const weekdayMap: Record<string, number> = {
+      '週日': 0, '週一': 1, '週二': 2, '週三': 3,
+      '週四': 4, '週五': 5, '週六': 6
+    }
+    const weekdayNames = ['日', '一', '二', '三', '四', '五', '六']
+    const targetDay = weekdayMap[course.day_of_week]
+    if (targetDay === undefined) { setLoadingSlots(false); return }
+
+    const { data: holidays } = await supabase
+      .from('course_holidays')
+      .select('date')
+      .or('course_id.eq.' + courseId + ',course_id.is.null')
+    const holidaySet = new Set((holidays || []).map((h: any) => h.date))
+
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    const current = new Date(today)
+    while (current.getDay() !== targetDay) {
+      current.setDate(current.getDate() + 1)
+    }
+
+    const candidateDates: string[] = []
+    const maxWeeks = 8
+    for (let i = 0; i < maxWeeks; i++) {
+      const dateStr = formatLocalDate(current)
+      if (!holidaySet.has(dateStr)) {
+        candidateDates.push(dateStr)
+      }
+      current.setDate(current.getDate() + 7)
+    }
+
+    const { data: attendanceData } = await supabase
+      .from('attendance')
+      .select('date')
+      .eq('course_id', courseId)
+      .in('date', candidateDates)
+      .in('status', ['已劃位', '出席', '遲到'])
+
+    const { data: trialData } = await supabase
+      .from('trial_bookings')
+      .select('trial_date')
+      .eq('course_id', courseId)
+      .in('trial_date', candidateDates)
+      .in('status', ['待確認', '已確認'])
+
+    const attendanceCountMap: Record<string, number> = {}
+    for (const a of (attendanceData || [])) {
+      attendanceCountMap[a.date] = (attendanceCountMap[a.date] || 0) + 1
+    }
+    for (const t of (trialData || [])) {
+      attendanceCountMap[t.trial_date] = (attendanceCountMap[t.trial_date] || 0) + 1
+    }
+
+    const maxStudents = course.max_students || 24
+    const slots = []
+    let availableCount = 0
+
+    for (const dateStr of candidateDates) {
+      const enrolled = attendanceCountMap[dateStr] || 0
+      const available = enrolled < maxStudents
+      if (available) availableCount++
+
+      const d = new Date(dateStr + 'T00:00:00')
+      slots.push({
+        date: dateStr,
+        weekday: '週' + weekdayNames[d.getDay()],
+        enrolled,
+        maxStudents,
+        available,
+      })
+
+      if (availableCount >= 4) break
+    }
+
+    setTrialDateSlots(slots)
+    setLoadingSlots(false)
+  }
+
+  useEffect(() => {
+    if (formData.courseId && formData.type === 'trial') {
+      fetchTrialSlots(formData.courseId)
+    }
+  }, [formData.courseId])
 
   if (userRole === 'user') {
     return (
@@ -768,97 +864,58 @@ export const RegisterPage: React.FC<{ courses: Course[]; initialCourseId?: strin
 
               {formData.type === 'trial' && (
                 <FormField label="選擇試上日期">
-                  <div className={`bg-white rounded-xl border transition-all p-4 shadow-sm ${errors.has('trialDate') ? 'border-danger ring-2 ring-danger/20 bg-danger/5' : 'border-neutral-100'}`}>
-                    <div className="flex items-center justify-between mb-4">
-                      <button
-                        type="button"
-                        className="p-1 hover:bg-neutral-100 rounded-full"
-                        onClick={() => {
-                          if (calendarMonth === 0) {
-                            setCalendarMonth(11);
-                            setCalendarYear(y => y - 1);
-                          } else {
-                            setCalendarMonth(m => m - 1);
-                          }
-                        }}
-                      >
-                        <ArrowLeft size={16} />
-                      </button>
-                      <div className="flex items-center gap-2">
-                        <Calendar size={16} className="text-primary" />
-                        <span className="text-sm font-bold">{calendarYear} 年 {calendarMonth + 1} 月</span>
+                  <div className={errors.has('trialDate') ? 'ring-2 ring-danger/20 bg-danger/5 rounded-xl p-1' : ''}>
+                    {loadingSlots ? (
+                      <div className="text-center py-8 text-neutral-400 text-sm">載入可選日期中...</div>
+                    ) : trialDateSlots.length === 0 ? (
+                      <div className="text-center py-8 text-neutral-400 text-sm">
+                        {formData.courseId ? '目前無可選日期' : '請先選擇班級'}
                       </div>
-                      <button
-                        type="button"
-                        className="p-1 hover:bg-neutral-100 rounded-full rotate-180"
-                        onClick={() => {
-                          if (calendarMonth === 11) {
-                            setCalendarMonth(0);
-                            setCalendarYear(y => y + 1);
-                          } else {
-                            setCalendarMonth(m => m + 1);
-                          }
-                        }}
-                      >
-                        <ArrowLeft size={16} />
-                      </button>
-                    </div>
-                    <div className="grid grid-cols-7 gap-1 text-center mb-2">
-                      {['日', '一', '二', '三', '四', '五', '六'].map(d => (
-                        <span key={d} className="text-[10px] font-bold text-neutral-400">{d}</span>
-                      ))}
-                    </div>
-                    <div className="grid grid-cols-7 gap-1 text-center">
-                      {(() => {
-                        const calCourse = courses.find(c => c.id === formData.courseId);
-                        const weekdayMap: Record<string, number> = {
-                          '週日': 0, '週一': 1, '週二': 2, '週三': 3,
-                          '週四': 4, '週五': 5, '週六': 6
-                        };
-                        const targetDay = calCourse ? (weekdayMap[calCourse.schedule] ?? -1) : -1;
-                        const today = new Date();
-                        today.setHours(0, 0, 0, 0);
-                        const firstDayOfMonth = new Date(calendarYear, calendarMonth, 1).getDay();
-                        const daysInMonth = new Date(calendarYear, calendarMonth + 1, 0).getDate();
-
-                        const blanks = Array.from({ length: firstDayOfMonth }, (_, i) => (
-                          <div key={`blank-${i}`} className="h-8 w-8" />
-                        ));
-
-                        const days = Array.from({ length: daysInMonth }, (_, i) => i + 1).map(day => {
-                          const date = new Date(calendarYear, calendarMonth, day);
-                          const dateStr = `${calendarYear}-${String(calendarMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-                          const isSelected = formData.trialDate === dateStr;
-                          const isAvailable = targetDay === -1
-                            ? date >= today
-                            : date.getDay() === targetDay && date >= today;
+                    ) : (
+                      <div className="grid grid-cols-2 gap-3">
+                        {trialDateSlots.map(slot => {
+                          const isSelected = formData.trialDate === slot.date
+                          const remaining = slot.maxStudents - slot.enrolled
                           return (
                             <button
-                              key={day}
+                              key={slot.date}
                               type="button"
-                              disabled={!isAvailable}
+                              disabled={!slot.available}
                               onClick={() => {
-                                setFormData({ ...formData, trialDate: dateStr });
+                                setFormData({ ...formData, trialDate: slot.date })
                                 if (errors.has('trialDate')) {
-                                  const next = new Set(errors);
-                                  next.delete('trialDate');
-                                  setErrors(next);
+                                  const next = new Set(errors)
+                                  next.delete('trialDate')
+                                  setErrors(next)
                                 }
                               }}
-                              className={`h-8 w-8 rounded-full flex items-center justify-center text-xs transition-all ${
-                                isSelected ? 'bg-primary text-white font-bold' :
-                                isAvailable ? 'text-neutral-900 hover:bg-primary-light hover:text-primary' :
-                                'text-neutral-300'
-                              }`}
+                              className={
+                                isSelected
+                                  ? 'relative p-4 rounded-xl border-2 border-primary bg-primary/5 text-left transition-all'
+                                  : slot.available
+                                    ? 'relative p-4 rounded-xl border-2 border-neutral-200 hover:border-primary/50 text-left transition-all'
+                                    : 'relative p-4 rounded-xl border-2 border-neutral-100 bg-neutral-50 opacity-50 cursor-not-allowed text-left'
+                              }
                             >
-                              {day}
+                              <p className={'text-sm font-bold ' + (isSelected ? 'text-primary' : slot.available ? 'text-neutral-900' : 'text-neutral-400')}>
+                                {slot.date}
+                              </p>
+                              <p className={'text-xs mt-1 ' + (isSelected ? 'text-primary/70' : 'text-neutral-500')}>
+                                {slot.weekday}
+                              </p>
+                              <p className={'text-xs mt-2 font-medium ' + (slot.available ? (remaining <= 3 ? 'text-orange-500' : 'text-green-600') : 'text-red-400')}>
+                                {slot.available ? '剩餘 ' + remaining + ' 個名額' : '已額滿'}
+                              </p>
+                              {isSelected && (
+                                <div className="absolute top-2 right-2">
+                                  <Check size={16} className="text-primary" />
+                                </div>
+                              )}
                             </button>
-                          );
-                        });
-
-                        return [...blanks, ...days];
-                      })()}
-                    </div>
+                          )
+                        })}
+                      </div>
+                    )}
                   </div>
                 </FormField>
               )}
