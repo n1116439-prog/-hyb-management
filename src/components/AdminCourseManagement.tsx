@@ -3,7 +3,8 @@ import {
   Plus, Search, Filter, Edit2, Trash2, Check, ChevronRight, ChevronLeft,
   Upload, MapPin, Clock, Users, Calendar, UserPlus, UserMinus,
   History as HistoryIcon, Settings, X, AlertCircle, Pause, Play,
-  CalendarX, CalendarPlus, RefreshCw, ClipboardList, UserCheck
+  CalendarX, CalendarPlus, RefreshCw, ClipboardList, UserCheck,
+  Download, Copy, CheckCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Button, Input, Select, Badge, ProgressBar, FormField } from './UI';
@@ -1330,6 +1331,12 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
   const [showAddModal, setShowAddModal] = useState(false);
   const [step, setStep] = useState(1);
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Export attendance sheet
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportData, setExportData] = useState<{ course: any; students: any[] }[]>([]);
+  const [exportLoading, setExportLoading] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [newCourseData, setNewCourseData] = useState<any>({
     name: '', category: 'children', location: '', time: '', schedule: '',
     maxEnrollment: 24, currentEnrollment: 0, coaches: [], status: 'enrolling',
@@ -1621,6 +1628,117 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
   );
 
   // ============================================================
+  // EXPORT ATTENDANCE SHEET
+  // ============================================================
+  const calculateAge = (birthDate: string | null): string => {
+    if (!birthDate) return '?'
+    const birth = new Date(birthDate)
+    const today = new Date()
+    let age = today.getFullYear() - birth.getFullYear()
+    const md = today.getMonth() - birth.getMonth()
+    if (md < 0 || (md === 0 && today.getDate() < birth.getDate())) age--
+    return String(age)
+  }
+
+  const getExportDateRange = () => {
+    const today = new Date()
+    const end = new Date(today.getTime() + 7 * 86400000)
+    const fmt = (d: Date) => `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`
+    return { startStr: fmt(today), endStr: fmt(end), start: today, end }
+  }
+
+  const fetchExportData = async () => {
+    setExportLoading(true)
+    setExportData([])
+
+    const today = new Date()
+    const weekdaySet = new Set<string>()
+    const weekdays = ['週日', '週一', '週二', '週三', '週四', '週五', '週六']
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(today.getTime() + i * 86400000)
+      weekdaySet.add(weekdays[d.getDay()])
+    }
+
+    const { data: activeCourses } = await supabase
+      .from('courses')
+      .select('id, name, day_of_week, start_time, end_time, coaches(name), venues(name)')
+      .eq('is_active', true)
+      .order('start_time')
+
+    const filtered = (activeCourses || []).filter(c => weekdaySet.has(c.day_of_week))
+
+    const results: { course: any; students: any[] }[] = []
+    for (const course of filtered) {
+      const { data: enrollments } = await supabase
+        .from('enrollments')
+        .select('student_id, students(name, birth_date, gender, student_code)')
+        .eq('course_id', course.id)
+        .eq('status', '已報名')
+
+      results.push({
+        course,
+        students: (enrollments || []).map((e: any) => e.students).filter(Boolean),
+      })
+    }
+
+    setExportData(results)
+    setExportLoading(false)
+  }
+
+  const generateText = () => {
+    const { startStr, endStr } = getExportDateRange()
+    let text = `📋 點名表（${startStr} ~ ${endStr}）\n\n`
+    for (const { course, students } of exportData) {
+      const coachName = (course.coaches as any)?.name || '—'
+      const venueName = (course.venues as any)?.name || '—'
+      text += `【${course.name}】\n`
+      text += `📅 ${course.day_of_week} ${course.start_time?.slice(0, 5)}-${course.end_time?.slice(0, 5)} | 📍 ${venueName} | 🏸 ${coachName}\n`
+      text += '━━━━━━━━━━━━━━━━━━\n'
+      students.forEach((s, i) => {
+        const age = calculateAge(s.birth_date)
+        const gender = s.gender || '-'
+        text += `${i + 1}. ${s.name}（${age}歲/${gender}）\n`
+      })
+      text += `共 ${students.length} 位學員\n`
+      text += '━━━━━━━━━━━━━━━━━━\n\n'
+    }
+    return text
+  }
+
+  const handleCopyText = async () => {
+    const text = generateText()
+    await navigator.clipboard.writeText(text)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  const handleExportCSV = () => {
+    const { startStr, endStr } = getExportDateRange()
+    const header = '班級名稱,上課日,時間,場地,教練,學員編號,學員姓名,年齡,性別\n'
+    const rows: string[] = []
+    for (const { course, students } of exportData) {
+      const coachName = (course.coaches as any)?.name || ''
+      const venueName = (course.venues as any)?.name || ''
+      const time = `${course.start_time?.slice(0, 5)}-${course.end_time?.slice(0, 5)}`
+      for (const s of students) {
+        rows.push([
+          course.name, course.day_of_week, time, venueName, coachName,
+          s.student_code || '', s.name, calculateAge(s.birth_date), s.gender || ''
+        ].join(','))
+      }
+    }
+    const blob = new Blob(['\ufeff' + header + rows.join('\n')], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `點名表_${startStr.replace('/', '')}-${endStr.replace('/', '')}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const totalExportStudents = exportData.reduce((s, d) => s + d.students.length, 0)
+
+  // ============================================================
   // RENDER
   // ============================================================
   return (
@@ -1632,9 +1750,14 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
           <div className="w-1 h-1 bg-neutral-300 rounded-full" />
           <Button variant="ghost" className="h-auto p-0 text-primary font-bold">課程管理</Button>
         </div>
-        <Button variant="primary" className="w-auto h-12 px-6 rounded-2xl shadow-lg shadow-primary/20" onClick={() => setShowAddModal(true)}>
-          <Plus size={20} /> 新增課程
-        </Button>
+        <div className="flex gap-3">
+          <Button variant="outline" className="w-auto h-12 px-5 rounded-2xl" onClick={() => { setShowExportModal(true); fetchExportData() }}>
+            <Download size={18} /> 匯出點名表
+          </Button>
+          <Button variant="primary" className="w-auto h-12 px-6 rounded-2xl shadow-lg shadow-primary/20" onClick={() => setShowAddModal(true)}>
+            <Plus size={20} /> 新增課程
+          </Button>
+        </div>
       </div>
 
       {/* Search */}
@@ -2217,6 +2340,53 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
           </div>
         </div>
       )}
+
+      {/* Export Attendance Sheet Modal */}
+      <AnimatePresence>
+        {showExportModal && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4">
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-white rounded-2xl w-full max-w-lg max-h-[80vh] overflow-hidden flex flex-col">
+              <div className="p-6 border-b flex items-center justify-between">
+                <h3 className="text-lg font-bold">匯出點名表</h3>
+                <button onClick={() => setShowExportModal(false)} className="text-neutral-400 hover:text-neutral-600"><X size={20} /></button>
+              </div>
+              {exportLoading ? (
+                <div className="p-12 text-center text-neutral-500">載入中...</div>
+              ) : exportData.length === 0 ? (
+                <div className="p-12 text-center text-neutral-500">無課程資料</div>
+              ) : (
+                <>
+                  <div className="flex-1 overflow-y-auto p-6 space-y-4">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-neutral-500">匯出範圍</span>
+                      <span className="font-medium">{getExportDateRange()}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-neutral-500">課程數</span>
+                      <span className="font-medium">{exportData.length} 堂</span>
+                    </div>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-neutral-500">學員人次</span>
+                      <span className="font-medium">{totalExportStudents} 人次</span>
+                    </div>
+                    <div className="border rounded-xl overflow-hidden mt-4">
+                      <pre className="p-4 text-xs whitespace-pre-wrap bg-neutral-50 max-h-60 overflow-y-auto font-mono">{generateText()}</pre>
+                    </div>
+                  </div>
+                  <div className="p-4 border-t flex gap-3">
+                    <button onClick={handleCopyText} className="flex-1 py-3 bg-neutral-100 rounded-xl font-medium text-sm flex items-center justify-center gap-2">
+                      {copied ? <><CheckCircle size={16} className="text-green-500" /> 已複製</> : <><Copy size={16} /> 複製純文字</>}
+                    </button>
+                    <button onClick={handleExportCSV} className="flex-1 py-3 bg-primary text-white rounded-xl font-medium text-sm flex items-center justify-center gap-2">
+                      <Download size={16} /> 下載 CSV
+                    </button>
+                  </div>
+                </>
+              )}
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };
