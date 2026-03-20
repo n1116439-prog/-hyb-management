@@ -27,14 +27,6 @@ interface AdminCourseManagementProps {
   contracts: VenueContract[];
 }
 
-const PRICING_PLANS = [
-  { id: 'trial', name: '試上課程', sessions: 1, pricePerSession: 600 },
-  { id: '8sessions', name: '彈性選擇方案', sessions: 8, pricePerSession: 765 },
-  { id: '12sessions', name: '新生首選方案', sessions: 12, pricePerSession: 650 },
-  { id: '15sessions', name: '穩步學習方案', sessions: 15, pricePerSession: 720 },
-  { id: '25sessions', name: '高效進階方案', sessions: 25, pricePerSession: 675 },
-  { id: '50sessions', name: '完整培訓方案', sessions: 50, pricePerSession: 630 },
-];
 
 // ============================================================
 // Tab Component: 課程日期
@@ -1283,6 +1275,7 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
   const [selectedVenueId, setSelectedVenueId] = useState<string | null>(null);
   const [selectedContractId, setSelectedContractId] = useState<string | null>(null);
   const [venueList, setVenueList] = useState<any[]>([]);
+  const [coursePlans, setCoursePlans] = useState<any[]>([]);
 
   // Edit modal state
   const [showEditModal, setShowEditModal] = useState(false);
@@ -1305,6 +1298,11 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
   const fetchVenues = async () => {
     const { data } = await supabase.from('venues').select('id, name, address').order('name');
     if (data) setVenueList(data);
+  };
+
+  const fetchCoursePlans = async () => {
+    const { data } = await supabase.from('course_plans').select('*').eq('is_active', true).order('sort_order');
+    if (data) setCoursePlans(data);
   };
 
   const fetchCoaches = async () => {
@@ -1365,6 +1363,7 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
     fetchCoaches();
     fetchVenueContracts();
     fetchVenues();
+    fetchCoursePlans();
   }, []);
 
   const handleThumbnailUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -2038,9 +2037,23 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
                           </Button>
                         </div>
                         <div className="bg-neutral-50 rounded-xl p-4">
-                          <p className="text-sm font-medium text-neutral-500 mb-2">課程方案定價</p>
+                          <p className="text-sm font-medium text-neutral-500 mb-2">
+                            {newCourseData.category === 'adult' ? '成人班' : '兒童班'}方案定價
+                          </p>
                           <div className="grid grid-cols-3 gap-2 text-sm">
-                            {PRICING_PLANS.map(plan => <div key={plan.id} className="bg-white rounded-lg p-2 text-center border"><p className="font-bold">{plan.sessions}堂</p><p className="text-primary font-medium">${plan.pricePerSession}/堂</p></div>)}
+                            {coursePlans
+                              .filter(plan => plan.category === (newCourseData.category === 'adult' ? 'adult' : 'children'))
+                              .map(plan => (
+                                <div key={plan.id} className="bg-white rounded-lg p-2 text-center border">
+                                  <p className="font-bold">{plan.sessions}堂</p>
+                                  <p className="text-primary font-medium">${plan.price_per_session}/堂</p>
+                                  <p className="text-xs text-neutral-400 mt-1">{plan.name}</p>
+                                </div>
+                              ))
+                            }
+                            {coursePlans.filter(plan => plan.category === (newCourseData.category === 'adult' ? 'adult' : 'children')).length === 0 && (
+                              <p className="col-span-3 text-center text-neutral-400 py-4">尚無{newCourseData.category === 'adult' ? '成人' : '兒童'}方案</p>
+                            )}
                           </div>
                         </div>
                         <div className="p-6 rounded-3xl bg-neutral-50 border border-neutral-100">
