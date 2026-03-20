@@ -1,374 +1,429 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  Users, 
-  Calendar, 
-  DollarSign, 
-  TrendingUp, 
-  Bell, 
-  Filter, 
-  Clock, 
-  MapPin, 
-  ChevronRight,
-  ArrowUpRight,
-  MoreHorizontal
-} from 'lucide-react';
-import { 
-  LineChart, 
-  Line, 
-  XAxis, 
-  YAxis, 
-  CartesianGrid, 
-  Tooltip, 
-  ResponsiveContainer 
-} from 'recharts';
-import { motion } from 'motion/react';
-import { Badge, Button } from './UI';
-import { supabase } from '../lib/supabase';
+import React, { useState, useEffect } from 'react'
+import { Users, DollarSign, Calendar, AlertCircle, Clock, ChevronRight, ChevronDown, ChevronUp, CheckCircle, MapPin, User, CreditCard, TrendingUp } from 'lucide-react'
+import { Badge } from './UI'
+import { supabase } from '../lib/supabase'
+
+function formatLocalDate(date: Date): string {
+  const y = date.getFullYear()
+  const m = String(date.getMonth() + 1).padStart(2, '0')
+  const d = String(date.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
+}
+
+function getRelativeTime(dateStr: string): string {
+  const diff = Date.now() - new Date(dateStr).getTime()
+  const mins = Math.floor(diff / 60000)
+  if (mins < 60) return mins <= 0 ? '剛剛' : mins + ' 分鐘前'
+  const hours = Math.floor(mins / 60)
+  if (hours < 24) return hours + ' 小時前'
+  const days = Math.floor(hours / 24)
+  if (days < 7) return days + ' 天前'
+  return dateStr.slice(0, 10)
+}
+
+const WEEKDAYS = ['週日', '週一', '週二', '週三', '週四', '週五', '週六']
 
 export const AdminDashboard: React.FC = () => {
-  const [stats, setStats] = useState({
-    totalStudents: 0,
-    totalStudentsGrowth: 0,
-    todayCourses: 0,
-    todayCoursesStatus: '載入中',
-    monthlyRevenue: 0,
-    monthlyRevenueGrowth: 0,
-    averageAttendance: 0,
-    averageAttendanceTrend: 0,
-  })
-  const [trendData, setTrendData] = useState<{month: string, count: number}[]>([])
-  const [recentRegistrations, setRecentRegistrations] = useState<any[]>([])
-  const [todaySchedule, setTodaySchedule] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    const fetchDashboard = async () => {
-      // 總學員數
-      const { count: studentCount } = await supabase
-        .from('students')
-        .select('id', { count: 'exact', head: true })
+  // Summary
+  const [totalStudents, setTotalStudents] = useState(0)
+  const [newStudentsThisMonth, setNewStudentsThisMonth] = useState(0)
+  const [confirmedRevenue, setConfirmedRevenue] = useState(0)
+  const [pendingRevenue, setPendingRevenue] = useState(0)
+  const [monthlyClasses, setMonthlyClasses] = useState(0)
+  const [activeCourses, setActiveCourses] = useState(0)
+  const [pendingPaymentCount, setPendingPaymentCount] = useState(0)
+  const [expiringStudentCount, setExpiringStudentCount] = useState(0)
 
-      // 本月營收
-      const now = new Date()
-      const firstDay = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`
-      const { data: payments } = await supabase
-        .from('payments')
-        .select('amount')
-        .gte('payment_date', firstDay)
-      const monthlyRevenue = payments?.reduce((sum, p) => sum + (p.amount || 0), 0) || 0
+  // Lists
+  const [pendingPayments, setPendingPayments] = useState<any[]>([])
+  const [expiringCredits, setExpiringCredits] = useState<any[]>([])
+  const [todayCourses, setTodayCourses] = useState<any[]>([])
+  const [weekCourses, setWeekCourses] = useState<any[]>([])
+  const [recentEnrollments, setRecentEnrollments] = useState<any[]>([])
+  const [showWeek, setShowWeek] = useState(false)
 
-      // 今日課程（根據今天星期幾）
-      const weekdays = ['週日', '週一', '週二', '週三', '週四', '週五', '週六']
-      const todayWeekday = weekdays[now.getDay()]
-      const { data: todayCourses } = await supabase
-        .from('courses')
-        .select('*, coaches(name), venues(name)')
-        .eq('day_of_week', todayWeekday)
+  const now = new Date()
+  const todayWeekday = WEEKDAYS[now.getDay()]
+  const todayStr = formatLocalDate(now)
+  const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`
+  const monthEnd = formatLocalDate(new Date(now.getFullYear(), now.getMonth() + 1, 0))
 
-      // 最近報名
-      const { data: recentEnrollments } = await supabase
-        .from('enrollments')
-        .select('*, students(name), courses(name)')
-        .order('enrolled_at', { ascending: false })
-        .limit(5)
+  useEffect(() => { fetchAll() }, [])
 
-      setStats({
-        totalStudents: studentCount || 0,
-        totalStudentsGrowth: 0,
-        todayCourses: todayCourses?.length || 0,
-        todayCoursesStatus: '穩定',
-        monthlyRevenue,
-        monthlyRevenueGrowth: 0,
-        averageAttendance: 0,
-        averageAttendanceTrend: 0,
-      })
+  const fetchAll = async () => {
+    setLoading(true)
+    await Promise.all([
+      fetchSummary(),
+      fetchPendingPayments(),
+      fetchExpiringCredits(),
+      fetchTodayCourses(),
+      fetchWeekCourses(),
+      fetchRecentEnrollments(),
+    ])
+    setLoading(false)
+  }
 
-      setTodaySchedule((todayCourses || []).map(c => ({
-        id: c.id,
-        time: c.start_time?.slice(0, 5) || '',
-        name: c.name,
-        coaches: c.coaches ? [c.coaches.name] : [],
-        location: c.venues?.name || '',
-        status: 'pending',
-      })))
+  const fetchSummary = async () => {
+    // Total students
+    const { count: sCount } = await supabase.from('students').select('id', { count: 'exact', head: true })
+    setTotalStudents(sCount || 0)
 
-      setRecentRegistrations((recentEnrollments || []).map(e => ({
-        id: e.id,
-        name: e.students?.name || '未知',
-        course: e.courses?.name || '未知',
-        type: 'official',
-        time: e.enrolled_at ? new Date(e.enrolled_at).toLocaleDateString('zh-TW') : '',
-      })))
-    }
-    fetchDashboard()
-  }, [])
+    // New students this month
+    const { count: newCount } = await supabase.from('students').select('id', { count: 'exact', head: true })
+      .gte('created_at', monthStart + 'T00:00:00')
+    setNewStudentsThisMonth(newCount || 0)
+
+    // Confirmed revenue this month
+    const { data: confirmedData } = await supabase.from('payments').select('amount')
+      .eq('status', 'confirmed')
+      .gte('confirmed_at', monthStart + 'T00:00:00')
+      .lte('confirmed_at', monthEnd + 'T23:59:59')
+    setConfirmedRevenue((confirmedData || []).reduce((s, p) => s + (p.amount || 0), 0))
+
+    // Pending revenue
+    const { data: pendingData } = await supabase.from('payments').select('amount').eq('status', 'pending')
+    setPendingRevenue((pendingData || []).reduce((s, p) => s + (p.amount || 0), 0))
+    setPendingPaymentCount((pendingData || []).length)
+
+    // Monthly classes (distinct date+course_id combos in attendance)
+    const { data: attData } = await supabase.from('attendance').select('date, course_id')
+      .gte('date', monthStart).lte('date', monthEnd)
+    const uniqueClasses = new Set((attData || []).map(a => `${a.date}_${a.course_id}`))
+    setMonthlyClasses(uniqueClasses.size)
+
+    // Active courses
+    const { count: cCount } = await supabase.from('courses').select('id', { count: 'exact', head: true }).eq('is_active', true)
+    setActiveCourses(cCount || 0)
+
+    // Expiring credits (within 14 days)
+    const in14 = formatLocalDate(new Date(now.getTime() + 14 * 86400000))
+    const { count: expCount } = await supabase.from('credits').select('id', { count: 'exact', head: true })
+      .eq('status', 'active').lte('expiry_date', in14).gte('expiry_date', todayStr)
+    setExpiringStudentCount(expCount || 0)
+  }
+
+  const fetchPendingPayments = async () => {
+    const { data } = await supabase.from('payments').select('*, students(name, student_code)')
+      .eq('status', 'pending').order('created_at', { ascending: false }).limit(5)
+    setPendingPayments(data || [])
+  }
+
+  const fetchExpiringCredits = async () => {
+    const in14 = formatLocalDate(new Date(now.getTime() + 14 * 86400000))
+    const { data } = await supabase.from('credits').select('*, students(name, student_code)')
+      .eq('status', 'active').lte('expiry_date', in14).gte('expiry_date', todayStr)
+      .order('expiry_date').limit(5)
+    setExpiringCredits(data || [])
+  }
+
+  const fetchTodayCourses = async () => {
+    const { data } = await supabase.from('courses').select('*, coaches(name), venues(name)')
+      .eq('day_of_week', todayWeekday).eq('is_active', true).order('start_time')
+
+    // Get enrollment counts
+    const courseIds = (data || []).map(c => c.id)
+    const { data: enrollments } = await supabase.from('enrollments').select('course_id')
+      .eq('status', '已報名').in('course_id', courseIds.length > 0 ? courseIds : ['none'])
+    const counts: Record<string, number> = {}
+    enrollments?.forEach(e => { counts[e.course_id] = (counts[e.course_id] || 0) + 1 })
+
+    setTodayCourses((data || []).map(c => ({ ...c, enrolledCount: counts[c.id] || 0 })))
+  }
+
+  const fetchWeekCourses = async () => {
+    const { data } = await supabase.from('courses').select('*, coaches(name), venues(name)')
+      .eq('is_active', true).order('start_time')
+    setWeekCourses(data || [])
+  }
+
+  const fetchRecentEnrollments = async () => {
+    const sevenDaysAgo = formatLocalDate(new Date(now.getTime() - 7 * 86400000))
+    const { data } = await supabase.from('enrollments').select('*, students(name, student_code), courses(name)')
+      .gte('enrolled_at', sevenDaysAgo + 'T00:00:00')
+      .order('enrolled_at', { ascending: false }).limit(5)
+    setRecentEnrollments(data || [])
+  }
+
+  const confirmPayment = async (id: string) => {
+    await supabase.from('payments').update({
+      status: 'confirmed', confirmed_at: new Date().toISOString(), confirmed_by: 'admin'
+    }).eq('id', id)
+    await fetchPendingPayments()
+    await fetchSummary()
+  }
+
+  const todoCount = pendingPaymentCount + expiringStudentCount
 
   return (
-    <div className="space-y-8 pb-12">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2 bg-white px-4 py-2 rounded-xl shadow-sm border border-neutral-100">
-            <Button variant="ghost" className="h-auto p-0 text-primary font-bold">儀表板</Button>
-            <div className="w-1 h-1 bg-neutral-300 rounded-full" />
-            <Button variant="ghost" className="h-auto p-0 text-neutral-400">課程管理</Button>
+    <div className="space-y-8 pb-12 max-w-7xl mx-auto">
+      {/* Summary Cards */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        {/* Card 1: Students */}
+        <div className="bg-white rounded-2xl border border-neutral-100 p-5 cursor-pointer hover:border-primary/30 transition-colors"
+          onClick={() => window.dispatchEvent(new CustomEvent('change-tab', { detail: 'admin-students' }))}>
+          <div className="flex items-center gap-3 mb-3">
+            <div className="w-12 h-12 rounded-xl bg-blue-50 flex items-center justify-center text-blue-600">
+              <Users size={22} />
+            </div>
           </div>
+          <p className="text-xs text-neutral-500 mb-0.5">總學員數</p>
+          <p className="text-2xl font-bold text-neutral-900">{totalStudents}</p>
+          <p className="text-xs text-neutral-400 mt-1">本月新增 {newStudentsThisMonth} 位</p>
         </div>
-        <div className="flex items-center gap-3">
-          <button 
-            onClick={() => window.dispatchEvent(new CustomEvent('change-tab', { detail: 'admin-notifications' }))}
-            className="w-10 h-10 flex items-center justify-center bg-white rounded-xl shadow-sm border border-neutral-100 text-neutral-600 relative"
-          >
-            <Bell size={20} />
-            <span className="absolute top-2.5 right-2.5 w-2 h-2 bg-danger rounded-full border-2 border-white" />
-          </button>
-          <button 
-            onClick={() => alert('篩選功能開發中')}
-            className="flex items-center gap-2 bg-white px-4 py-2 rounded-xl shadow-sm border border-neutral-100 text-primary font-bold"
-          >
-            <Filter size={18} />
-            篩選
-          </button>
+
+        {/* Card 2: Revenue */}
+        <div className="bg-white rounded-2xl border border-neutral-100 p-5 cursor-pointer hover:border-primary/30 transition-colors"
+          onClick={() => window.dispatchEvent(new CustomEvent('change-tab', { detail: 'admin-revenue' }))}>
+          <div className="flex items-center gap-3 mb-3">
+            <div className="w-12 h-12 rounded-xl bg-green-50 flex items-center justify-center text-green-600">
+              <DollarSign size={22} />
+            </div>
+          </div>
+          <p className="text-xs text-neutral-500 mb-0.5">本月營收</p>
+          <p className="text-2xl font-bold text-green-600">NT$ {confirmedRevenue.toLocaleString()}</p>
+          <p className="text-xs text-neutral-400 mt-1">待確認 NT$ {pendingRevenue.toLocaleString()}</p>
+        </div>
+
+        {/* Card 3: Classes */}
+        <div className="bg-white rounded-2xl border border-neutral-100 p-5">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="w-12 h-12 rounded-xl bg-purple-50 flex items-center justify-center text-purple-600">
+              <Calendar size={22} />
+            </div>
+          </div>
+          <p className="text-xs text-neutral-500 mb-0.5">本月授課堂數</p>
+          <p className="text-2xl font-bold text-neutral-900">{monthlyClasses}</p>
+          <p className="text-xs text-neutral-400 mt-1">共 {activeCourses} 門課程</p>
+        </div>
+
+        {/* Card 4: Todos */}
+        <div className={'bg-white rounded-2xl border p-5 ' + (todoCount > 0 ? 'border-amber-300' : 'border-neutral-100')}>
+          <div className="flex items-center gap-3 mb-3">
+            <div className={'w-12 h-12 rounded-xl flex items-center justify-center ' + (todoCount > 0 ? 'bg-amber-50 text-amber-600' : 'bg-neutral-50 text-neutral-400')}>
+              <AlertCircle size={22} />
+            </div>
+          </div>
+          <p className="text-xs text-neutral-500 mb-0.5">待處理事項</p>
+          <p className={'text-2xl font-bold ' + (todoCount > 0 ? 'text-amber-600' : 'text-neutral-900')}>{todoCount}</p>
+          <p className="text-xs text-neutral-400 mt-1">{pendingPaymentCount} 筆付款 / {expiringStudentCount} 位待續約</p>
         </div>
       </div>
 
-      {/* Stats Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
-        <StatCard 
-          label="總註冊學員" 
-          value="350" 
-          growth={15} 
-          icon={<Users className="text-primary" size={24} />} 
-          onClick={() => window.dispatchEvent(new CustomEvent('change-tab', { detail: 'admin-students' }))}
-        />
-        <StatCard 
-          label="總學員數" 
-          value={stats.totalStudents.toString()} 
-          growth={stats.totalStudentsGrowth} 
-          icon={<Users className="text-secondary" size={24} />} 
-          onClick={() => window.dispatchEvent(new CustomEvent('change-tab', { detail: 'admin-students' }))}
-        />
-        <StatCard 
-          label="本月營收" 
-          value={`NT$ ${stats.monthlyRevenue / 1000}K`} 
-          growth={stats.monthlyRevenueGrowth} 
-          icon={<DollarSign className="text-emerald-500" size={24} />} 
-          onClick={() => window.dispatchEvent(new CustomEvent('change-tab', { detail: 'admin-revenue' }))}
-        />
-        <StatCard 
-          label="平均出席率" 
-          value={`${stats.averageAttendance}%`} 
-          growth={stats.averageAttendanceTrend} 
-          icon={<TrendingUp className="text-orange-500" size={24} />} 
-          onClick={() => window.dispatchEvent(new CustomEvent('change-tab', { detail: 'admin-attendance' }))}
-        />
-        <StatCard 
-          label="教練管理" 
-          value="12" 
-          subValue="名教練"
-          icon={<Users className="text-indigo-500" size={24} />} 
-          onClick={() => window.dispatchEvent(new CustomEvent('change-tab', { detail: 'admin-coaches' }))}
-        />
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Trend Chart */}
-        <div className="lg:col-span-2 bg-white rounded-3xl p-8 shadow-sm border border-neutral-100">
-          <div className="flex items-center justify-between mb-8">
-            <div className="flex items-center gap-3">
-              <TrendingUp className="text-primary" size={20} />
-              <h3 className="text-lg font-bold text-neutral-900">學員增長趨勢</h3>
-            </div>
-            <select className="bg-neutral-50 border border-neutral-200 rounded-xl px-4 py-2 text-sm font-medium outline-none">
-              <option>最近 6 個月</option>
-              <option>最近 1 年</option>
-            </select>
-          </div>
-          <div className="h-[300px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={trendData}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
-                <XAxis 
-                  dataKey="month" 
-                  axisLine={false} 
-                  tickLine={false} 
-                  tick={{ fill: '#94a3b8', fontSize: 12 }}
-                  dy={10}
-                />
-                <YAxis 
-                  axisLine={false} 
-                  tickLine={false} 
-                  tick={{ fill: '#94a3b8', fontSize: 12 }}
-                />
-                <Tooltip 
-                  contentStyle={{ 
-                    borderRadius: '16px', 
-                    border: 'none', 
-                    boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' 
-                  }} 
-                />
-                <Line 
-                  type="monotone" 
-                  dataKey="count" 
-                  stroke="#2563eb" 
-                  strokeWidth={3} 
-                  dot={{ r: 4, fill: '#2563eb', strokeWidth: 2, stroke: '#fff' }}
-                  activeDot={{ r: 6, strokeWidth: 0 }}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        {/* Today Schedule */}
-        <div className="bg-white rounded-3xl p-8 shadow-sm border border-neutral-100">
-          <div className="flex items-center justify-between mb-8">
-            <div className="flex items-center gap-3">
-              <Calendar className="text-primary" size={20} />
-              <h3 className="text-lg font-bold text-neutral-900">今日課表</h3>
-            </div>
-            <button 
-              onClick={() => alert('即將跳轉至完整課表')}
-              className="text-sm font-bold text-primary"
-            >
-              查看全部
-            </button>
-          </div>
-          <div className="space-y-6">
-            {todaySchedule.map((item, idx) => (
-              <div key={item.id} className="relative pl-8 pb-6 last:pb-0">
-                {/* Timeline Line */}
-                {idx !== todaySchedule.length - 1 && (
-                  <div className="absolute left-[11px] top-6 bottom-0 w-0.5 bg-neutral-100" />
+      {/* Two-column layout */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Left Column */}
+        <div className="space-y-6">
+          {/* Pending Payments */}
+          <div className="bg-white rounded-2xl border border-neutral-100 shadow-sm">
+            <div className="p-5 border-b border-neutral-100 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <h3 className="text-lg font-bold text-neutral-900">待確認付款</h3>
+                {pendingPayments.length > 0 && (
+                  <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">{pendingPaymentCount}</span>
                 )}
-                {/* Timeline Dot */}
-                <div className={`absolute left-0 top-1 w-6 h-6 rounded-full flex items-center justify-center border-4 border-white shadow-sm ${
-                  item.status === 'ongoing' ? 'bg-primary' : 'bg-neutral-200'
-                }`}>
-                  <Clock size={12} className="text-white" />
+              </div>
+              <button onClick={() => window.dispatchEvent(new CustomEvent('change-tab', { detail: 'admin-revenue' }))}
+                className="text-sm font-medium text-primary flex items-center gap-1 hover:underline">
+                查看全部 <ChevronRight size={14} />
+              </button>
+            </div>
+            <div className="p-5">
+              {pendingPayments.length === 0 ? (
+                <div className="text-center py-8">
+                  <CheckCircle size={32} className="text-green-400 mx-auto mb-2" />
+                  <p className="text-sm text-neutral-500">所有付款已確認</p>
                 </div>
-                
+              ) : (
+                <div className="space-y-3">
+                  {pendingPayments.map(p => (
+                    <div key={p.id} className="flex items-center justify-between bg-neutral-50 rounded-xl px-4 py-3">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-sm shrink-0">
+                          {p.students?.name?.[0] || '?'}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-medium text-sm text-neutral-900 truncate">{p.students?.name || '—'}</span>
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600">{p.students?.student_code || ''}</span>
+                          </div>
+                          <p className="text-xs text-neutral-400">{getRelativeTime(p.created_at)}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3 shrink-0">
+                        <span className="font-bold text-sm text-primary">NT$ {(p.amount || 0).toLocaleString()}</span>
+                        <button onClick={() => confirmPayment(p.id)}
+                          className="px-2.5 py-1 bg-green-600 text-white rounded-lg text-xs font-medium hover:bg-green-700 transition-colors">
+                          確認
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Expiring Credits */}
+          <div className="bg-white rounded-2xl border border-neutral-100 shadow-sm">
+            <div className="p-5 border-b border-neutral-100 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <h3 className="text-lg font-bold text-neutral-900">堂數即將到期</h3>
+                {expiringCredits.length > 0 && (
+                  <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-red-100 text-red-600">{expiringStudentCount}</span>
+                )}
+              </div>
+            </div>
+            <div className="p-5">
+              {expiringCredits.length === 0 ? (
+                <div className="text-center py-8">
+                  <CheckCircle size={32} className="text-green-400 mx-auto mb-2" />
+                  <p className="text-sm text-neutral-500">目前沒有即將到期的學員</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {expiringCredits.map(c => {
+                    const daysLeft = Math.ceil((new Date(c.expiry_date).getTime() - now.getTime()) / 86400000)
+                    const urgent = daysLeft <= 7
+                    return (
+                      <div key={c.id} className="flex items-center justify-between bg-neutral-50 rounded-xl px-4 py-3">
+                        <div className="flex items-center gap-3">
+                          <div className={'w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm shrink-0 ' + (urgent ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-600')}>
+                            {c.students?.name?.[0] || '?'}
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-medium text-sm">{c.students?.name || '—'}</span>
+                              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600">{c.students?.student_code || ''}</span>
+                            </div>
+                            <p className="text-xs text-neutral-400">
+                              剩餘 {(c.total_credits || 0) - (c.used_credits || 0)} / {c.total_credits || 0} 堂
+                            </p>
+                          </div>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <p className={'text-xs font-bold ' + (urgent ? 'text-red-500' : 'text-amber-600')}>
+                            {daysLeft} 天後到期
+                          </p>
+                          <p className="text-[10px] text-neutral-400">{c.expiry_date}</p>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Right Column */}
+        <div className="space-y-6">
+          {/* Today's Schedule */}
+          <div className="bg-white rounded-2xl border border-neutral-100 shadow-sm">
+            <div className="p-5 border-b border-neutral-100 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <h3 className="text-lg font-bold text-neutral-900">今日課表</h3>
+                <span className="text-xs text-neutral-400">{todayStr} {todayWeekday}</span>
+              </div>
+            </div>
+            <div className="p-5">
+              {todayCourses.length === 0 ? (
+                <div className="text-center py-8">
+                  <Calendar size={32} className="text-neutral-300 mx-auto mb-2" />
+                  <p className="text-sm text-neutral-500">今日無課程</p>
+                </div>
+              ) : (
                 <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-bold text-neutral-400">{item.time}</span>
-                    <Badge variant={item.status === 'ongoing' ? 'accent' : 'neutral'}>
-                      {item.status === 'ongoing' ? '進行中' : '待開始'}
-                    </Badge>
-                  </div>
-                  <h4 className="font-bold text-neutral-900 leading-tight">{item.name}</h4>
-                  <div className="flex items-center gap-4 text-xs text-neutral-500">
-                    <div className="flex items-center gap-1">
-                      <Users size={14} />
-                      <span>{item.coaches.join('、')}</span>
+                  {todayCourses.map(c => (
+                    <div key={c.id} className="flex items-center justify-between bg-neutral-50 rounded-xl px-4 py-3">
+                      <div>
+                        <p className="font-medium text-sm text-neutral-900">{c.name}</p>
+                        <div className="flex items-center gap-3 text-xs text-neutral-500 mt-0.5">
+                          <span className="flex items-center gap-1"><Clock size={12} /> {c.start_time?.slice(0, 5)}-{c.end_time?.slice(0, 5)}</span>
+                          <span className="flex items-center gap-1"><User size={12} /> {c.coaches?.name || '—'}</span>
+                          <span className="flex items-center gap-1"><MapPin size={12} /> {c.venues?.name || '—'}</span>
+                        </div>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <span className="text-xs text-neutral-500">{c.enrolledCount}/{c.max_students || '—'}</span>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-1">
-                      <MapPin size={14} />
-                      <span>{item.location}</span>
-                    </div>
-                  </div>
+                  ))}
                 </div>
-              </div>
-            ))}
-          </div>
-          <Button 
-            variant="outline" 
-            className="mt-8 border-primary text-primary rounded-2xl h-12"
-            onClick={() => alert('請至課程管理新增課程')}
-          >
-            新增課程安排
-          </Button>
-        </div>
-      </div>
+              )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        {/* Recent Registrations */}
-        <div className="bg-white rounded-3xl p-8 shadow-sm border border-neutral-100">
-          <div className="flex items-center justify-between mb-8">
-            <div className="flex items-center gap-3">
-              <TrendingUp className="text-primary" size={20} />
+              {/* Week toggle */}
+              <button onClick={() => setShowWeek(!showWeek)}
+                className="w-full mt-3 py-2 text-sm text-neutral-500 hover:text-primary flex items-center justify-center gap-1 transition-colors">
+                {showWeek ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                {showWeek ? '收合本週課表' : '展開本週課表'}
+              </button>
+
+              {showWeek && (
+                <div className="mt-3 space-y-4 border-t border-neutral-100 pt-4">
+                  {WEEKDAYS.map(day => {
+                    const dayCourses = weekCourses.filter(c => c.day_of_week === day)
+                    if (dayCourses.length === 0) return null
+                    return (
+                      <div key={day}>
+                        <p className={'text-xs font-bold mb-1.5 ' + (day === todayWeekday ? 'text-primary' : 'text-neutral-400')}>{day}</p>
+                        <div className="space-y-1.5">
+                          {dayCourses.map(c => (
+                            <div key={c.id} className="flex items-center justify-between text-sm px-3 py-2 bg-neutral-50 rounded-lg">
+                              <span className="text-neutral-700">{c.name}</span>
+                              <span className="text-xs text-neutral-400">{c.start_time?.slice(0, 5)}-{c.end_time?.slice(0, 5)} · {c.venues?.name || ''}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Recent Enrollments */}
+          <div className="bg-white rounded-2xl border border-neutral-100 shadow-sm">
+            <div className="p-5 border-b border-neutral-100 flex items-center justify-between">
               <h3 className="text-lg font-bold text-neutral-900">近期報名</h3>
-            </div>
-          </div>
-          <div className="space-y-6">
-            {recentRegistrations.map(reg => (
-              <div key={reg.id} className="flex items-center justify-between p-4 rounded-2xl hover:bg-neutral-50 transition-colors cursor-pointer">
-                <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-lg">
-                    {reg.name[0]}
-                  </div>
-                  <div>
-                    <h4 className="font-bold text-neutral-900">{reg.name}</h4>
-                    <p className="text-xs text-neutral-500">{reg.course}</p>
-                  </div>
-                </div>
-                <div className="flex flex-col items-end gap-2">
-                  <Badge variant={reg.type === 'trial' ? 'secondary' : 'accent'}>
-                    {reg.type === 'trial' ? '體驗試上' : '正式報名'}
-                  </Badge>
-                  <span className="text-[10px] text-neutral-400">{reg.time}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* AI Suggestion Card */}
-        <div className="bg-primary rounded-3xl p-10 text-white relative overflow-hidden shadow-xl shadow-primary/20">
-          <div className="relative z-10 space-y-6">
-            <h3 className="text-3xl font-bold leading-tight">準備好擴展您的課程了嗎？</h3>
-            <p className="text-primary-light text-lg leading-relaxed opacity-90">
-              目前您的課程平均出席率高達 94%，建議可以考慮在週末新增更多「兒童體適能」班級，以滿足目前的高需求。
-            </p>
-            <div className="flex items-center gap-4 pt-4">
-              <button 
-                onClick={() => alert('已為您規劃新課程建議')}
-                className="bg-white text-primary px-8 py-4 rounded-2xl font-bold text-lg shadow-lg hover:bg-neutral-50 transition-colors"
-              >
-                立即行動
-              </button>
-              <button 
-                onClick={() => alert('建議已暫存')}
-                className="text-white font-bold text-lg hover:underline"
-              >
-                稍後再說
+              <button onClick={() => window.dispatchEvent(new CustomEvent('change-tab', { detail: 'admin-students' }))}
+                className="text-sm font-medium text-primary flex items-center gap-1 hover:underline">
+                查看全部 <ChevronRight size={14} />
               </button>
             </div>
+            <div className="p-5">
+              {recentEnrollments.length === 0 ? (
+                <div className="text-center py-8">
+                  <Users size={32} className="text-neutral-300 mx-auto mb-2" />
+                  <p className="text-sm text-neutral-500">近 7 天無新報名</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {recentEnrollments.map(e => (
+                    <div key={e.id} className="flex items-center justify-between bg-neutral-50 rounded-xl px-4 py-3">
+                      <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-sm">
+                          {e.students?.name?.[0] || '?'}
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-medium text-sm">{e.students?.name || '—'}</span>
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600">{e.students?.student_code || ''}</span>
+                          </div>
+                          <p className="text-xs text-neutral-400">{e.courses?.name || '—'}</p>
+                        </div>
+                      </div>
+                      <span className="text-xs text-neutral-400 shrink-0">{getRelativeTime(e.enrolled_at || e.created_at)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
-          {/* Decorative Elements */}
-          <div className="absolute -right-20 -bottom-20 w-80 h-80 bg-white/10 rounded-full blur-3xl" />
-          <div className="absolute -left-20 -top-20 w-60 h-60 bg-white/5 rounded-full blur-2xl" />
         </div>
       </div>
     </div>
-  );
-};
-
-const StatCard: React.FC<{ label: string; value: string; growth?: number; subValue?: string; icon: React.ReactNode; onClick?: () => void }> = ({ 
-  label, value, growth, subValue, icon, onClick 
-}) => (
-  <motion.div 
-    whileHover={{ y: -4 }}
-    onClick={onClick}
-    className={`bg-white p-6 rounded-3xl shadow-sm border border-neutral-100 flex items-center gap-5 ${onClick ? 'cursor-pointer hover:border-primary/30' : ''}`}
-  >
-    <div className="w-14 h-14 rounded-2xl bg-neutral-50 flex items-center justify-center">
-      {icon}
-    </div>
-    <div>
-      <div className="flex items-center gap-2 mb-1">
-        <span className="text-sm font-medium text-neutral-500">{label}</span>
-        {growth !== undefined && (
-          <div className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-600 text-[10px] font-bold">
-            +{growth}%
-            <ArrowUpRight size={10} />
-          </div>
-        )}
-        {subValue && (
-          <div className="px-1.5 py-0.5 rounded-full bg-neutral-50 text-neutral-400 text-[10px] font-bold">
-            {subValue}
-          </div>
-        )}
-      </div>
-      <div className="text-2xl font-bold text-neutral-900">{value}</div>
-    </div>
-  </motion.div>
-);
+  )
+}
