@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Home, ClipboardList, PenTool, Search, Menu, X, ChevronLeft, Users, FileText, Bell, LayoutDashboard, UserCheck, DollarSign, Activity, Tag, Settings } from 'lucide-react';
+import { Home, ClipboardList, PenTool, Search, Menu, X, ChevronLeft, Users, FileText, Bell, LayoutDashboard, UserCheck, DollarSign, Activity, Tag, Settings, User } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Badge } from './UI';
 
@@ -29,6 +29,7 @@ export const Layout: React.FC<LayoutProps> = ({
     { id: 'home', icon: Home, label: '課程班級' },
     { id: 'sessions', icon: ClipboardList, label: '我的課程' },
     { id: 'register', icon: PenTool, label: '立即報名' },
+    { id: 'profile', icon: User, label: '個人資料' },
   ];
 
   const adminTabs = [
@@ -45,7 +46,7 @@ export const Layout: React.FC<LayoutProps> = ({
     { id: 'admin-settings', icon: Settings, label: '設定' },
   ];
 
-  const tabs = userRole === 'admin' ? adminTabs : studentTabs;
+  const tabs = userRole === 'admin' ? adminTabs : studentTabs.filter(t => t.id !== 'profile' || userRole !== 'user');
 
   return (
     <div className="flex flex-col min-h-screen bg-neutral-50 relative overflow-x-hidden">
