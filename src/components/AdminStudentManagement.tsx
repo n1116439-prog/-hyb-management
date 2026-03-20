@@ -137,6 +137,12 @@ export const AdminStudentManagement: React.FC<{
   const [loadingDates, setLoadingDates] = useState(false)
   const [activityLogs, setActivityLogs] = useState<any[]>([])
   const [courseScheduleMap, setCourseScheduleMap] = useState<Record<string, any[]>>({})
+  const [showMakeupModal, setShowMakeupModal] = useState(false)
+  const [makeupSourceAttendance, setMakeupSourceAttendance] = useState<any>(null)
+  const [makeupCourseId, setMakeupCourseId] = useState('')
+  const [makeupDate, setMakeupDate] = useState('')
+  const [makeupAvailableDates, setMakeupAvailableDates] = useState<string[]>([])
+  const [loadingMakeupDates, setLoadingMakeupDates] = useState(false)
 
   const fetchStudentAttendance = async (studentId: string) => {
     const { data } = await supabase
@@ -358,9 +364,150 @@ export const AdminStudentManagement: React.FC<{
     fetchStudentAttendance(studentId)
   }
 
+  const fetchMakeupDates = async (courseId: string) => {
+    setLoadingMakeupDates(true)
+    setMakeupAvailableDates([])
+    setMakeupDate('')
+
+    const { data: course } = await supabase
+      .from('courses')
+      .select('day_of_week')
+      .eq('id', courseId)
+      .single()
+    if (!course) { setLoadingMakeupDates(false); return }
+
+    const weekdayMap: Record<string, number> = { '週日': 0, '週一': 1, '週二': 2, '週三': 3, '週四': 4, '週五': 5, '週六': 6 }
+    const targetDay = weekdayMap[course.day_of_week]
+    if (targetDay === undefined) { setLoadingMakeupDates(false); return }
+
+    const { data: holidays } = await supabase
+      .from('course_holidays')
+      .select('date')
+      .or('course_id.eq.' + courseId + ',course_id.is.null')
+    const holidaySet = new Set((holidays || []).map((h: any) => h.date))
+
+    const today = new Date()
+    const current = new Date(today)
+    while (current.getDay() !== targetDay) {
+      current.setDate(current.getDate() + 1)
+    }
+
+    const dates: string[] = []
+    for (let i = 0; i < 8; i++) {
+      const dateStr = formatLocalDate(current)
+      if (!holidaySet.has(dateStr)) {
+        dates.push(dateStr)
+      }
+      current.setDate(current.getDate() + 7)
+    }
+
+    setMakeupAvailableDates(dates)
+    setLoadingMakeupDates(false)
+  }
+
+  const handleMakeupClass = async () => {
+    if (!makeupSourceAttendance || !makeupCourseId || !makeupDate || !selectedStudent) return
+
+    const { data: creditData } = await supabase
+      .from('credits')
+      .select('id, expiry_date')
+      .eq('student_id', selectedStudent.id)
+      .eq('status', 'active')
+      .limit(1)
+
+    const credit = creditData?.[0]
+    if (credit?.expiry_date && makeupDate > credit.expiry_date) {
+      alert('補課日期超過方案期限（' + credit.expiry_date + '），無法安排')
+      return
+    }
+
+    const { data: existing } = await supabase
+      .from('attendance')
+      .select('id')
+      .eq('student_id', selectedStudent.id)
+      .eq('course_id', makeupCourseId)
+      .eq('date', makeupDate)
+
+    if (existing && existing.length > 0) {
+      alert('該學員在此日期已有出席記錄')
+      return
+    }
+
+    const { error } = await supabase.from('attendance').insert({
+      student_id: selectedStudent.id,
+      course_id: makeupCourseId,
+      date: makeupDate,
+      status: '補課',
+      deducted: true,
+      credit_id: credit?.id || null,
+    })
+
+    if (error) {
+      alert('安排補課失敗：' + error.message)
+      return
+    }
+
+    await logStudentActivity(selectedStudent.id, 'makeup_class', {
+      from_date: makeupSourceAttendance.date,
+      to_course_id: makeupCourseId,
+      to_date: makeupDate,
+    })
+
+    alert('補課安排成功！')
+    setShowMakeupModal(false)
+    setMakeupSourceAttendance(null)
+    setMakeupCourseId('')
+    setMakeupDate('')
+
+    fetchCourseAttendance(selectedStudent.id)
+    fetchStudentAttendance(selectedStudent.id)
+  }
+
   const handleAttendanceStatusChange = async (attendanceId: string, studentId: string, newStatus: string) => {
     const deductedStatuses = ['出席', '缺席', '遲到']
     const deducted = deductedStatuses.includes(newStatus)
+
+    // 請假次數檢查
+    if (['請假', '病假'].includes(newStatus)) {
+      const { data: creditData } = await supabase
+        .from('credits')
+        .select('id, leave_count, max_leave')
+        .eq('student_id', studentId)
+        .eq('status', 'active')
+        .limit(1)
+
+      const credit = creditData?.[0]
+      if (credit) {
+        const currentLeave = credit.leave_count || 0
+        const maxLeave = credit.max_leave || 0
+
+        if (maxLeave > 0 && currentLeave >= maxLeave) {
+          alert('此學員請假次數已達上限（' + currentLeave + '/' + maxLeave + '），無法再請假。\n建議安排到其他班級補課。')
+          return
+        }
+
+        await supabase.from('credits').update({
+          leave_count: currentLeave + 1
+        }).eq('id', credit.id)
+      }
+    }
+
+    // 如果從請假改回其他狀態，要扣回 leave_count
+    const { data: oldAtt } = await supabase.from('attendance').select('status').eq('id', attendanceId).single()
+    if (oldAtt && ['請假', '病假'].includes(oldAtt.status) && !['請假', '病假'].includes(newStatus)) {
+      const { data: creditData } = await supabase
+        .from('credits')
+        .select('id, leave_count')
+        .eq('student_id', studentId)
+        .eq('status', 'active')
+        .limit(1)
+      const credit = creditData?.[0]
+      if (credit && (credit.leave_count || 0) > 0) {
+        await supabase.from('credits').update({
+          leave_count: (credit.leave_count || 0) - 1
+        }).eq('id', credit.id)
+      }
+    }
 
     const { error } = await supabase.from('attendance').update({ status: newStatus, deducted }).eq('id', attendanceId)
     if (error) {
@@ -1298,6 +1445,19 @@ export const AdminStudentManagement: React.FC<{
                                               <X size={14} />
                                             </button>
                                           )}
+                                          {['請假', '病假'].includes(entry.status) && (
+                                            <button
+                                              onClick={(e) => {
+                                                e.stopPropagation()
+                                                setMakeupSourceAttendance(entry)
+                                                setShowMakeupModal(true)
+                                              }}
+                                              className='text-xs text-blue-500 hover:text-blue-700 font-medium ml-1'
+                                              title='安排補課'
+                                            >
+                                              補課
+                                            </button>
+                                          )}
                                         </div>
                                       </div>
                                     )
@@ -1568,6 +1728,57 @@ export const AdminStudentManagement: React.FC<{
           </div>
         )}
       </AnimatePresence>
+
+      {/* 補課 Modal */}
+      {showMakeupModal && makeupSourceAttendance && selectedStudent && (
+        <div className='fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4' onClick={() => setShowMakeupModal(false)}>
+          <div className='bg-white rounded-2xl w-full max-w-sm p-6 space-y-4' onClick={e => e.stopPropagation()}>
+            <h3 className='text-lg font-bold'>安排補課</h3>
+            <div className='bg-neutral-50 rounded-xl p-3 text-sm'>
+              <p><span className='text-neutral-500'>學員：</span>{selectedStudent.studentName}</p>
+              <p><span className='text-neutral-500'>請假日期：</span>{makeupSourceAttendance.date}</p>
+            </div>
+
+            <FormField label='選擇補課班級'>
+              <Select value={makeupCourseId} onChange={e => { setMakeupCourseId(e.target.value); if (e.target.value) fetchMakeupDates(e.target.value) }}>
+                <option value=''>請選擇班級</option>
+                {allCourses.map((c: any) => (
+                  <option key={c.id} value={c.id}>{c.name} ({c.day_of_week} {c.start_time?.slice(0,5)}-{c.end_time?.slice(0,5)})</option>
+                ))}
+              </Select>
+            </FormField>
+
+            {makeupCourseId && (
+              <FormField label='選擇補課日期'>
+                {loadingMakeupDates ? (
+                  <p className='text-sm text-neutral-400'>載入中...</p>
+                ) : makeupAvailableDates.length === 0 ? (
+                  <p className='text-sm text-neutral-400'>無可選日期</p>
+                ) : (
+                  <div className='flex flex-wrap gap-2'>
+                    {makeupAvailableDates.map(date => (
+                      <button
+                        key={date}
+                        onClick={() => setMakeupDate(date)}
+                        className={'px-3 py-2 rounded-lg text-sm border transition-all ' + (makeupDate === date ? 'bg-primary text-white border-primary' : 'bg-white text-neutral-600 border-neutral-200 hover:border-primary')}
+                      >
+                        {date}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </FormField>
+            )}
+
+            <div className='flex gap-3'>
+              <button onClick={() => setShowMakeupModal(false)} className='flex-1 py-3 bg-neutral-100 rounded-xl'>取消</button>
+              <button onClick={handleMakeupClass} disabled={!makeupCourseId || !makeupDate} className='flex-1 py-3 bg-primary text-white rounded-xl font-medium disabled:opacity-50'>
+                確認補課
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 加堂/減堂 Modal */}
       {showCreditModal && operatingStudent && (

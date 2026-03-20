@@ -927,6 +927,49 @@ const CourseAttendanceTab: React.FC<{
 
     const deducted = getDeducted(newStatus);
 
+    // 請假次數檢查
+    if (['請假', '病假'].includes(newStatus)) {
+      const { data: creditData } = await supabase
+        .from('credits')
+        .select('id, leave_count, max_leave')
+        .eq('student_id', record.student_id)
+        .eq('status', 'active')
+        .limit(1)
+
+      const credit = creditData?.[0]
+      if (credit) {
+        const currentLeave = credit.leave_count || 0
+        const maxLeave = credit.max_leave || 0
+
+        if (maxLeave > 0 && currentLeave >= maxLeave) {
+          alert('此學員請假次數已達上限（' + currentLeave + '/' + maxLeave + '）')
+          setSavingId(null)
+          return
+        }
+
+        await supabase.from('credits').update({
+          leave_count: currentLeave + 1
+        }).eq('id', credit.id)
+      }
+    }
+
+    // 從請假改回其他狀態時扣回
+    const { data: oldAtt } = await supabase.from('attendance').select('status').eq('id', record.id).single()
+    if (oldAtt && ['請假', '病假'].includes(oldAtt.status) && !['請假', '病假'].includes(newStatus)) {
+      const { data: creditData } = await supabase
+        .from('credits')
+        .select('id, leave_count')
+        .eq('student_id', record.student_id)
+        .eq('status', 'active')
+        .limit(1)
+      const credit = creditData?.[0]
+      if (credit && (credit.leave_count || 0) > 0) {
+        await supabase.from('credits').update({
+          leave_count: (credit.leave_count || 0) - 1
+        }).eq('id', credit.id)
+      }
+    }
+
     const { error } = await supabase
       .from('attendance')
       .update({ status: newStatus, deducted })
