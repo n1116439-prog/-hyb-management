@@ -279,12 +279,18 @@ export default function App() {
         const email = session.user.email || '';
         setUserEmail(email);
 
-        // 檢查是否為已驗證管理員
-        const adminVerified = sessionStorage.getItem('admin_verified');
-        if (adminVerified === email) {
+        // 檢查是否為管理員且已驗證 OTP
+        const { data: roleData } = await supabase
+          .from('user_roles')
+          .select('role, otp_verified')
+          .eq('user_id', session.user.id)
+          .in('role', ['super_admin', 'admin'])
+          .maybeSingle();
+
+        if (roleData && roleData.otp_verified === true) {
           setUserRole('admin');
           setIsAdminLoggedIn(true);
-          setActiveTab('admin-dashboard');
+          setActiveTab(prev => prev.startsWith('admin-') ? prev : 'admin-dashboard');
         } else {
           setUserRole('student');
           // 查詢用戶類型
@@ -318,13 +324,27 @@ export default function App() {
     };
     checkSession();
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_OUT') {
         setUserRole('user');
         setIsAdminLoggedIn(false);
         setUserEmail('');
       } else if (session) {
         setUserEmail(session.user.email || '');
+
+        // 檢查是否為管理員且已驗證 OTP
+        const { data: roleData } = await supabase
+          .from('user_roles')
+          .select('role, otp_verified')
+          .eq('user_id', session.user.id)
+          .in('role', ['super_admin', 'admin'])
+          .maybeSingle();
+
+        if (roleData && roleData.otp_verified === true) {
+          setUserRole('admin');
+          setIsAdminLoggedIn(true);
+          setActiveTab(prev => prev.startsWith('admin-') ? prev : 'admin-dashboard');
+        }
       }
     });
 
@@ -758,6 +778,11 @@ export default function App() {
   };
 
   const handleLogout = async () => {
+    // 登出前重設 otp_verified，強制下次登入重新驗證
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) {
+      await supabase.from('user_roles').update({ otp_verified: false }).eq('user_id', user.id);
+    }
     await supabase.auth.signOut();
     sessionStorage.removeItem('line_user');
     sessionStorage.removeItem('admin_verified');
