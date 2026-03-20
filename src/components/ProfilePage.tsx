@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { User, Edit2, Plus, ChevronDown, ChevronUp, Lock, Phone, Mail, Save, X } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { Button, Input, FormField } from './UI'
+import { validateName, validatePhone, validatePassword, validateConfirmPassword, validateBirthDate } from '../lib/validators'
 
 function formatLocalDate(date: Date): string {
   const year = date.getFullYear()
@@ -32,6 +33,10 @@ export const ProfilePage: React.FC = () => {
   const [showPasswordForm, setShowPasswordForm] = useState(false)
   const [passwordForm, setPasswordForm] = useState({ newPassword: '', confirmPassword: '' })
   const [saving, setSaving] = useState(false)
+  const [profileErrors, setProfileErrors] = useState<Record<string, string>>({})
+  const [studentFormErrors, setStudentFormErrors] = useState<Record<string, string>>({})
+  const [newStudentErrors, setNewStudentErrors] = useState<Record<string, string>>({})
+  const [passwordErrors, setPasswordErrors] = useState<Record<string, string>>({})
 
   const fetchUserInfo = async () => {
     const { data: { user } } = await supabase.auth.getUser()
@@ -66,6 +71,13 @@ export const ProfilePage: React.FC = () => {
   }, [])
 
   const handleSaveProfile = async () => {
+    const errs: Record<string, string> = {}
+    const nameErr = validateName(profileForm.name)
+    if (nameErr) errs.name = nameErr
+    const phoneErr = validatePhone(profileForm.phone)
+    if (phoneErr) errs.phone = phoneErr
+    setProfileErrors(errs)
+    if (Object.keys(errs).length > 0) return
     setSaving(true)
     const { error } = await supabase.auth.updateUser({
       data: { parentName: profileForm.name, phone: profileForm.phone }
@@ -80,14 +92,13 @@ export const ProfilePage: React.FC = () => {
   }
 
   const handleChangePassword = async () => {
-    if (!passwordForm.newPassword || passwordForm.newPassword.length < 6) {
-      alert('新密碼至少需要 6 位')
-      return
-    }
-    if (passwordForm.newPassword !== passwordForm.confirmPassword) {
-      alert('兩次輸入的密碼不一致')
-      return
-    }
+    const errs: Record<string, string> = {}
+    const pwErr = validatePassword(passwordForm.newPassword)
+    if (pwErr) errs.newPassword = pwErr
+    const cfErr = validateConfirmPassword(passwordForm.newPassword, passwordForm.confirmPassword)
+    if (cfErr) errs.confirmPassword = cfErr
+    setPasswordErrors(errs)
+    if (Object.keys(errs).length > 0) return
     setSaving(true)
     const { error } = await supabase.auth.updateUser({ password: passwordForm.newPassword })
     if (error) {
@@ -96,6 +107,7 @@ export const ProfilePage: React.FC = () => {
       alert('密碼已更新')
       setShowPasswordForm(false)
       setPasswordForm({ newPassword: '', confirmPassword: '' })
+      setPasswordErrors({})
     }
     setSaving(false)
   }
@@ -116,6 +128,13 @@ export const ProfilePage: React.FC = () => {
 
   const handleSaveStudent = async () => {
     if (!studentForm.id) return
+    const errs: Record<string, string> = {}
+    const nameErr = validateName(studentForm.name, '學員姓名')
+    if (nameErr) errs.name = nameErr
+    const bdErr = validateBirthDate(studentForm.birthDate, true)
+    if (bdErr) errs.birthDate = bdErr
+    setStudentFormErrors(errs)
+    if (Object.keys(errs).length > 0) return
     setSaving(true)
     const notes = [
       studentForm.school ? '學校: ' + studentForm.school : '',
@@ -139,10 +158,13 @@ export const ProfilePage: React.FC = () => {
   }
 
   const handleAddStudent = async () => {
-    if (!newStudent.name || !newStudent.birthDate) {
-      alert('請填寫學員姓名和出生日期')
-      return
-    }
+    const errs: Record<string, string> = {}
+    const nameErr = validateName(newStudent.name, '學員姓名')
+    if (nameErr) errs.name = nameErr
+    const bdErr = validateBirthDate(newStudent.birthDate, true)
+    if (bdErr) errs.birthDate = bdErr
+    setNewStudentErrors(errs)
+    if (Object.keys(errs).length > 0) return
     setSaving(true)
     const age = calculateAge(newStudent.birthDate)
     const isAdult = age >= 16
@@ -198,10 +220,20 @@ export const ProfilePage: React.FC = () => {
         {editingProfile ? (
           <div className='space-y-3'>
             <FormField label='姓名'>
-              <Input value={profileForm.name} onChange={e => setProfileForm({...profileForm, name: e.target.value})} />
+              <Input value={profileForm.name}
+                className={profileErrors.name ? 'border-red-400 ring-1 ring-red-200' : ''}
+                onChange={e => { setProfileForm({...profileForm, name: e.target.value}); if (profileErrors.name) { const err = validateName(e.target.value); setProfileErrors(prev => { const n = {...prev}; if (err) n.name = err; else delete n.name; return n; }); } }}
+                onBlur={() => { const err = validateName(profileForm.name); setProfileErrors(prev => { const n = {...prev}; if (err) n.name = err; else delete n.name; return n; }); }}
+              />
+              {profileErrors.name && <p className='text-xs text-red-500 mt-1'>{profileErrors.name}</p>}
             </FormField>
             <FormField label='聯絡電話'>
-              <Input value={profileForm.phone} onChange={e => setProfileForm({...profileForm, phone: e.target.value})} />
+              <Input value={profileForm.phone}
+                className={profileErrors.phone ? 'border-red-400 ring-1 ring-red-200' : ''}
+                onChange={e => { setProfileForm({...profileForm, phone: e.target.value}); if (profileErrors.phone) { const err = validatePhone(e.target.value); setProfileErrors(prev => { const n = {...prev}; if (err) n.phone = err; else delete n.phone; return n; }); } }}
+                onBlur={() => { const err = validatePhone(profileForm.phone); setProfileErrors(prev => { const n = {...prev}; if (err) n.phone = err; else delete n.phone; return n; }); }}
+              />
+              {profileErrors.phone && <p className='text-xs text-red-500 mt-1'>{profileErrors.phone}</p>}
             </FormField>
             <div className='flex items-center gap-2 text-sm text-neutral-500'>
               <Mail size={14} /> {userInfo.email}
@@ -238,10 +270,20 @@ export const ProfilePage: React.FC = () => {
         {showPasswordForm && (
           <div className='space-y-3'>
             <FormField label='新密碼（至少 6 位）'>
-              <Input type='password' placeholder='請輸入新密碼' value={passwordForm.newPassword} onChange={e => setPasswordForm({...passwordForm, newPassword: e.target.value})} />
+              <Input type='password' placeholder='請輸入新密碼' value={passwordForm.newPassword}
+                className={passwordErrors.newPassword ? 'border-red-400 ring-1 ring-red-200' : ''}
+                onChange={e => { setPasswordForm({...passwordForm, newPassword: e.target.value}); if (passwordErrors.newPassword) { const err = validatePassword(e.target.value); setPasswordErrors(prev => { const n = {...prev}; if (err) n.newPassword = err; else delete n.newPassword; return n; }); } }}
+                onBlur={() => { const err = validatePassword(passwordForm.newPassword); setPasswordErrors(prev => { const n = {...prev}; if (err) n.newPassword = err; else delete n.newPassword; return n; }); }}
+              />
+              {passwordErrors.newPassword && <p className='text-xs text-red-500 mt-1'>{passwordErrors.newPassword}</p>}
             </FormField>
             <FormField label='確認新密碼'>
-              <Input type='password' placeholder='再次輸入新密碼' value={passwordForm.confirmPassword} onChange={e => setPasswordForm({...passwordForm, confirmPassword: e.target.value})} />
+              <Input type='password' placeholder='再次輸入新密碼' value={passwordForm.confirmPassword}
+                className={passwordErrors.confirmPassword ? 'border-red-400 ring-1 ring-red-200' : ''}
+                onChange={e => { setPasswordForm({...passwordForm, confirmPassword: e.target.value}); if (passwordErrors.confirmPassword) { const err = validateConfirmPassword(passwordForm.newPassword, e.target.value); setPasswordErrors(prev => { const n = {...prev}; if (err) n.confirmPassword = err; else delete n.confirmPassword; return n; }); } }}
+                onBlur={() => { const err = validateConfirmPassword(passwordForm.newPassword, passwordForm.confirmPassword); setPasswordErrors(prev => { const n = {...prev}; if (err) n.confirmPassword = err; else delete n.confirmPassword; return n; }); }}
+              />
+              {passwordErrors.confirmPassword && <p className='text-xs text-red-500 mt-1'>{passwordErrors.confirmPassword}</p>}
             </FormField>
             <Button onClick={handleChangePassword} variant='primary' loading={saving}>更新密碼</Button>
           </div>
@@ -262,12 +304,22 @@ export const ProfilePage: React.FC = () => {
           <div className='bg-blue-50 rounded-xl p-4 space-y-3'>
             <p className='text-sm font-bold text-blue-700'>新增學員</p>
             <FormField label='真實姓名'>
-              <Input placeholder='學員姓名' value={newStudent.name} onChange={e => setNewStudent({...newStudent, name: e.target.value})} />
+              <Input placeholder='學員姓名' value={newStudent.name}
+                className={newStudentErrors.name ? 'border-red-400 ring-1 ring-red-200' : ''}
+                onChange={e => { setNewStudent({...newStudent, name: e.target.value}); if (newStudentErrors.name) { const err = validateName(e.target.value, '學員姓名'); setNewStudentErrors(prev => { const n = {...prev}; if (err) n.name = err; else delete n.name; return n; }); } }}
+                onBlur={() => { const err = validateName(newStudent.name, '學員姓名'); setNewStudentErrors(prev => { const n = {...prev}; if (err) n.name = err; else delete n.name; return n; }); }}
+              />
+              {newStudentErrors.name && <p className='text-xs text-red-500 mt-1'>{newStudentErrors.name}</p>}
             </FormField>
             <div className='flex gap-3'>
               <div className='flex-1'>
                 <FormField label='出生日期'>
-                  <Input type='date' value={newStudent.birthDate} onChange={e => setNewStudent({...newStudent, birthDate: e.target.value})} />
+                  <Input type='date' value={newStudent.birthDate}
+                    className={newStudentErrors.birthDate ? 'border-red-400 ring-1 ring-red-200' : ''}
+                    onChange={e => { setNewStudent({...newStudent, birthDate: e.target.value}); if (newStudentErrors.birthDate) { const err = validateBirthDate(e.target.value, true); setNewStudentErrors(prev => { const n = {...prev}; if (err) n.birthDate = err; else delete n.birthDate; return n; }); } }}
+                    onBlur={() => { const err = validateBirthDate(newStudent.birthDate, true); setNewStudentErrors(prev => { const n = {...prev}; if (err) n.birthDate = err; else delete n.birthDate; return n; }); }}
+                  />
+                  {newStudentErrors.birthDate && <p className='text-xs text-red-500 mt-1'>{newStudentErrors.birthDate}</p>}
                 </FormField>
               </div>
               <div className='flex-1'>
@@ -305,7 +357,7 @@ export const ProfilePage: React.FC = () => {
             )}
             <div className='flex gap-2'>
               <Button onClick={handleAddStudent} variant='primary' loading={saving}>確認新增</Button>
-              <Button onClick={() => { setShowAddStudent(false); setNewStudent({ name: '', gender: '', birthDate: '', level: '', school: '' }) }} variant='ghost'>取消</Button>
+              <Button onClick={() => { setShowAddStudent(false); setNewStudent({ name: '', gender: '', birthDate: '', level: '', school: '' }); setNewStudentErrors({}) }} variant='ghost'>取消</Button>
             </div>
           </div>
         )}
@@ -353,12 +405,22 @@ export const ProfilePage: React.FC = () => {
                       {isEditing ? (
                         <div className='space-y-3'>
                           <FormField label='姓名'>
-                            <Input value={studentForm.name} onChange={e => setStudentForm({...studentForm, name: e.target.value})} />
+                            <Input value={studentForm.name}
+                              className={studentFormErrors.name ? 'border-red-400 ring-1 ring-red-200' : ''}
+                              onChange={e => { setStudentForm({...studentForm, name: e.target.value}); if (studentFormErrors.name) { const err = validateName(e.target.value, '學員姓名'); setStudentFormErrors(prev => { const n = {...prev}; if (err) n.name = err; else delete n.name; return n; }); } }}
+                              onBlur={() => { const err = validateName(studentForm.name, '學員姓名'); setStudentFormErrors(prev => { const n = {...prev}; if (err) n.name = err; else delete n.name; return n; }); }}
+                            />
+                            {studentFormErrors.name && <p className='text-xs text-red-500 mt-1'>{studentFormErrors.name}</p>}
                           </FormField>
                           <div className='flex gap-3'>
                             <div className='flex-1'>
                               <FormField label='出生日期'>
-                                <Input type='date' value={studentForm.birthDate} onChange={e => setStudentForm({...studentForm, birthDate: e.target.value})} />
+                                <Input type='date' value={studentForm.birthDate}
+                                  className={studentFormErrors.birthDate ? 'border-red-400 ring-1 ring-red-200' : ''}
+                                  onChange={e => { setStudentForm({...studentForm, birthDate: e.target.value}); if (studentFormErrors.birthDate) { const err = validateBirthDate(e.target.value, true); setStudentFormErrors(prev => { const n = {...prev}; if (err) n.birthDate = err; else delete n.birthDate; return n; }); } }}
+                                  onBlur={() => { const err = validateBirthDate(studentForm.birthDate, true); setStudentFormErrors(prev => { const n = {...prev}; if (err) n.birthDate = err; else delete n.birthDate; return n; }); }}
+                                />
+                                {studentFormErrors.birthDate && <p className='text-xs text-red-500 mt-1'>{studentFormErrors.birthDate}</p>}
                               </FormField>
                             </div>
                             <div className='flex-1'>
@@ -391,7 +453,7 @@ export const ProfilePage: React.FC = () => {
                           )}
                           <div className='flex gap-2'>
                             <Button onClick={handleSaveStudent} variant='primary' loading={saving}>儲存</Button>
-                            <Button onClick={() => setEditingStudentId(null)} variant='ghost'>取消</Button>
+                            <Button onClick={() => { setEditingStudentId(null); setStudentFormErrors({}) }} variant='ghost'>取消</Button>
                           </div>
                         </div>
                       ) : (

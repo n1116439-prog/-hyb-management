@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import * as XLSX from 'xlsx';
 import { AdminTrialManagement } from './AdminTrialManagement';
 
 function formatLocalDate(date: Date): string {
@@ -30,7 +31,8 @@ import {
   Clock,
   History,
   Plus,
-  X
+  X,
+  Upload
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Button, Input, Select, Badge, ProgressBar, FormField } from './UI';
@@ -43,6 +45,26 @@ export const AdminStudentManagement: React.FC<{
 }> = ({ waitlists = [] }) => {
   const [students, setStudents] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+
+  // 匯入歷史資料
+  const [showImportModal, setShowImportModal] = useState(false)
+  const [importStep, setImportStep] = useState(1)
+  const [importFile, setImportFile] = useState<File | null>(null)
+  const [importSheet1, setImportSheet1] = useState<any[][]>([])
+  const [importSheet2, setImportSheet2] = useState<any[][]>([])
+  const [importSheet1Errors, setImportSheet1Errors] = useState<(string | null)[]>([])
+  const [importSheet2Errors, setImportSheet2Errors] = useState<(string | null)[]>([])
+  const [importPreviewTab, setImportPreviewTab] = useState<1 | 2>(1)
+  const [importProgress, setImportProgress] = useState(0)
+  const [importProgressText, setImportProgressText] = useState('')
+  const [importResult, setImportResult] = useState<{
+    enrollNew: number; enrollSkip: number; enrollFail: number;
+    creditNew: number; creditUpdate: number; creditFail: number;
+    attendNew: number; attendSkip: number; attendFail: number;
+    failures: { row: number; sheet: string; reason: string }[];
+  } | null>(null)
+  const [importing, setImporting] = useState(false)
+  const [dragOver, setDragOver] = useState(false)
 
   const fetchStudents = async () => {
     setLoading(true)
@@ -930,6 +952,227 @@ export const AdminStudentManagement: React.FC<{
     alert('正在匯出學員名單...');
   };
 
+  // ── 匯入歷史資料 ──
+  const resetImport = () => {
+    setImportStep(1)
+    setImportFile(null)
+    setImportSheet1([])
+    setImportSheet2([])
+    setImportSheet1Errors([])
+    setImportSheet2Errors([])
+    setImportPreviewTab(1)
+    setImportProgress(0)
+    setImportProgressText('')
+    setImportResult(null)
+    setImporting(false)
+    setDragOver(false)
+  }
+
+  const handleImportFile = async (file: File) => {
+    setImportFile(file)
+    const reader = new FileReader()
+    reader.onload = async (e) => {
+      const data = new Uint8Array(e.target?.result as ArrayBuffer)
+      const wb = XLSX.read(data, { type: 'array' })
+
+      const ws1 = wb.Sheets[wb.SheetNames[0]]
+      const ws2 = wb.Sheets[wb.SheetNames[1]]
+      const rows1: any[][] = ws1 ? XLSX.utils.sheet_to_json(ws1, { header: 1 }) : []
+      const rows2: any[][] = ws2 ? XLSX.utils.sheet_to_json(ws2, { header: 1 }) : []
+
+      // 跳過前5行，過濾空行
+      const dataRows1 = rows1.slice(5).filter(r => r.some(c => c != null && c !== ''))
+      const dataRows2 = rows2.slice(5).filter(r => r.some(c => c != null && c !== ''))
+      setImportSheet1(dataRows1)
+      setImportSheet2(dataRows2)
+
+      // 一次性查對照表
+      const { data: allStu } = await supabase.from('students').select('id, student_code, name')
+      const { data: allCrs } = await supabase.from('courses').select('id, name')
+      const studentMap = new Map((allStu || []).map(s => [s.student_code, { id: s.id, name: s.name }]))
+      const courseMap = new Map((allCrs || []).map(c => [c.name, c.id]))
+
+      // 驗證 Sheet 1
+      const s1Errors = dataRows1.map((row, _i) => {
+        const code = String(row[0] || '').trim()
+        const courseName = String(row[1] || '').trim()
+        const total = Number(row[2])
+        const used = Number(row[3])
+        if (!code) return '學員編號不能為空'
+        if (!studentMap.has(code)) return `找不到學員 ${code}`
+        if (!courseName) return '課程名稱不能為空'
+        if (!courseMap.has(courseName)) return `找不到課程「${courseName}」`
+        if (!Number.isInteger(total) || total <= 0) return '總堂數必須是正整數'
+        if (!Number.isInteger(used) || used < 0) return '已用堂數必須是非負整數'
+        return null
+      })
+      setImportSheet1Errors(s1Errors)
+
+      // 驗證 Sheet 2
+      const validStatuses = ['出席', '請假', '缺席', '補課']
+      const s2Errors = dataRows2.map((row, _i) => {
+        const code = String(row[0] || '').trim()
+        const courseName = String(row[1] || '').trim()
+        const date = String(row[2] || '').trim()
+        const status = String(row[3] || '').trim()
+        if (!code) return '學員編號不能為空'
+        if (!studentMap.has(code)) return `找不到學員 ${code}`
+        if (!courseName) return '課程名稱不能為空'
+        if (!courseMap.has(courseName)) return `找不到課程「${courseName}」`
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return `日期格式錯誤：${date}`
+        if (!validStatuses.includes(status)) return `狀態必須是 ${validStatuses.join('/')}`
+        return null
+      })
+      setImportSheet2Errors(s2Errors)
+
+      setImportStep(2)
+    }
+    reader.readAsArrayBuffer(file)
+  }
+
+  const handleImportConfirm = async () => {
+    setImporting(true)
+    setImportStep(3)
+    setImportProgress(0)
+
+    const { data: allStu } = await supabase.from('students').select('id, student_code, name')
+    const { data: allCrs } = await supabase.from('courses').select('id, name')
+    const studentMap = new Map((allStu || []).map(s => [s.student_code, { id: s.id, name: s.name }]))
+    const courseMap = new Map((allCrs || []).map(c => [c.name, c.id]))
+
+    const result = {
+      enrollNew: 0, enrollSkip: 0, enrollFail: 0,
+      creditNew: 0, creditUpdate: 0, creditFail: 0,
+      attendNew: 0, attendSkip: 0, attendFail: 0,
+      failures: [] as { row: number; sheet: string; reason: string }[],
+    }
+
+    // Sheet 1
+    const valid1 = importSheet1.filter((_, i) => !importSheet1Errors[i])
+    for (let i = 0; i < valid1.length; i++) {
+      const row = valid1[i]
+      setImportProgressText(`正在處理堂數 ${i + 1}/${valid1.length}...`)
+      setImportProgress(Math.round(((i + 1) / (valid1.length + importSheet2.filter((_, j) => !importSheet2Errors[j]).length)) * 100))
+
+      const code = String(row[0]).trim()
+      const courseName = String(row[1]).trim()
+      const total = Number(row[2])
+      const used = Number(row[3])
+      const planName = String(row[5] || '歷史匯入').trim()
+      const expiryDate = row[6] ? String(row[6]).trim() : null
+
+      const stu = studentMap.get(code)
+      const courseId = courseMap.get(courseName)
+      if (!stu || !courseId) { result.enrollFail++; result.creditFail++; continue }
+
+      try {
+        // Enrollment
+        const { data: existEnroll } = await supabase
+          .from('enrollments')
+          .select('id')
+          .eq('student_id', stu.id)
+          .eq('course_id', courseId)
+          .limit(1)
+        if (existEnroll && existEnroll.length > 0) {
+          result.enrollSkip++
+        } else {
+          const { error: eErr } = await supabase.from('enrollments').insert({
+            student_id: stu.id, course_id: courseId, status: '已報名', notes: '歷史資料匯入',
+          })
+          if (eErr) { result.enrollFail++; result.failures.push({ row: i + 6, sheet: 'Sheet1', reason: eErr.message }) }
+          else result.enrollNew++
+        }
+
+        // Credits
+        const { data: existCred } = await supabase
+          .from('credits')
+          .select('id, total_credits, used_credits')
+          .eq('student_id', stu.id)
+          .eq('status', 'active')
+          .limit(1)
+
+        if (existCred && existCred.length > 0) {
+          const { error: cErr } = await supabase.from('credits').update({
+            total_credits: existCred[0].total_credits + total,
+            used_credits: existCred[0].used_credits + used,
+          }).eq('id', existCred[0].id)
+          if (cErr) { result.creditFail++; result.failures.push({ row: i + 6, sheet: 'Sheet1', reason: cErr.message }) }
+          else result.creditUpdate++
+        } else {
+          const { error: cErr } = await supabase.from('credits').insert({
+            student_id: stu.id,
+            total_credits: total,
+            used_credits: used,
+            remaining_credits: total - used,
+            plan_name: planName,
+            expiry_date: expiryDate || null,
+            purchase_date: formatLocalDate(new Date()),
+            status: 'active',
+            leave_count: 0,
+            max_leave: 3,
+            plan_weeks: 12,
+          })
+          if (cErr) { result.creditFail++; result.failures.push({ row: i + 6, sheet: 'Sheet1', reason: cErr.message }) }
+          else result.creditNew++
+        }
+      } catch (err: any) {
+        result.enrollFail++
+        result.creditFail++
+        result.failures.push({ row: i + 6, sheet: 'Sheet1', reason: err.message || '未知錯誤' })
+      }
+    }
+
+    // Sheet 2
+    const valid2 = importSheet2.filter((_, i) => !importSheet2Errors[i])
+    for (let i = 0; i < valid2.length; i++) {
+      const row = valid2[i]
+      setImportProgressText(`正在處理出席紀錄 ${i + 1}/${valid2.length}...`)
+      setImportProgress(Math.round(((valid1.length + i + 1) / (valid1.length + valid2.length)) * 100))
+
+      const code = String(row[0]).trim()
+      const courseName = String(row[1]).trim()
+      const date = String(row[2]).trim()
+      const status = String(row[3]).trim()
+      const notes = row[4] ? String(row[4]).trim() : '歷史資料匯入'
+
+      const stu = studentMap.get(code)
+      const courseId = courseMap.get(courseName)
+      if (!stu || !courseId) { result.attendFail++; continue }
+
+      try {
+        const { data: existAtt } = await supabase
+          .from('attendance')
+          .select('id')
+          .eq('student_id', stu.id)
+          .eq('course_id', courseId)
+          .eq('date', date)
+          .limit(1)
+        if (existAtt && existAtt.length > 0) {
+          result.attendSkip++
+        } else {
+          const { error: aErr } = await supabase.from('attendance').insert({
+            student_id: stu.id,
+            course_id: courseId,
+            date,
+            status,
+            deducted: status === '出席' || status === '補課',
+            notes,
+          })
+          if (aErr) { result.attendFail++; result.failures.push({ row: i + 6, sheet: 'Sheet2', reason: aErr.message }) }
+          else result.attendNew++
+        }
+      } catch (err: any) {
+        result.attendFail++
+        result.failures.push({ row: i + 6, sheet: 'Sheet2', reason: err.message || '未知錯誤' })
+      }
+    }
+
+    setImportProgress(100)
+    setImportResult(result)
+    setImportStep(4)
+    setImporting(false)
+  }
+
   return (
     <div className="space-y-8 pb-12">
       {/* Header */}
@@ -942,8 +1185,16 @@ export const AdminStudentManagement: React.FC<{
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <Button 
-            variant="outline" 
+          <Button
+            variant="outline"
+            className="w-auto h-12 px-6 rounded-2xl border-neutral-200 text-neutral-600 bg-white"
+            onClick={() => { resetImport(); setShowImportModal(true) }}
+          >
+            <Upload size={18} />
+            匯入歷史資料
+          </Button>
+          <Button
+            variant="outline"
             className="w-auto h-12 px-6 rounded-2xl border-neutral-200 text-neutral-600 bg-white"
             onClick={handleExportStudents}
           >
@@ -1913,6 +2164,232 @@ export const AdminStudentManagement: React.FC<{
             </div>
 
             <button onClick={() => setShowEnrollModal(false)} className="w-full py-3 bg-neutral-100 rounded-xl font-medium">關閉</button>
+          </div>
+        </div>
+      )}
+
+      {/* 匯入歷史資料 Modal */}
+      {showImportModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-neutral-900/40 backdrop-blur-sm" onClick={() => { if (!importing) { resetImport(); setShowImportModal(false) } }} />
+          <div className="relative w-full max-w-4xl max-h-[90vh] bg-white rounded-2xl shadow-xl flex flex-col mx-4 overflow-hidden">
+            {/* Header */}
+            <div className="p-6 border-b border-neutral-100">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h3 className="text-xl font-bold text-neutral-900">匯入學員歷史資料</h3>
+                  <p className="text-sm text-neutral-500 mt-1">上傳填好的 Excel 模板，系統會自動建立報名、堂數包和出席紀錄</p>
+                </div>
+                {!importing && (
+                  <button onClick={() => { resetImport(); setShowImportModal(false) }} className="p-2 hover:bg-neutral-100 rounded-xl"><X size={20} /></button>
+                )}
+              </div>
+              {/* Step Indicator */}
+              <div className="flex items-center justify-between gap-2">
+                {['上傳檔案', '資料預覽', '匯入中', '匯入結果'].map((label, i) => {
+                  const s = i + 1
+                  const active = importStep === s
+                  const done = importStep > s
+                  return (
+                    <div key={s} className="flex-1 flex flex-col items-center gap-1">
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-all ${active ? 'bg-primary text-white scale-110' : done ? 'bg-emerald-500 text-white' : 'bg-neutral-100 text-neutral-400'}`}>
+                        {done ? <Check size={14} /> : s}
+                      </div>
+                      <span className={`text-[10px] font-medium ${active ? 'text-primary' : 'text-neutral-400'}`}>{label}</span>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+
+            {/* Body */}
+            <div className="flex-1 overflow-y-auto p-6">
+              {/* Step 1: Upload */}
+              {importStep === 1 && (
+                <div className="space-y-4">
+                  <div
+                    className={`border-2 border-dashed rounded-2xl p-12 text-center transition-colors cursor-pointer ${dragOver ? 'border-primary bg-primary/5' : 'border-neutral-300 hover:border-primary'}`}
+                    onDragOver={e => { e.preventDefault(); setDragOver(true) }}
+                    onDragLeave={() => setDragOver(false)}
+                    onDrop={e => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer.files[0]; if (f) handleImportFile(f) }}
+                    onClick={() => { const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.xlsx,.xls'; inp.onchange = (ev: any) => { const f = ev.target.files?.[0]; if (f) handleImportFile(f) }; inp.click() }}
+                  >
+                    <Upload size={40} className="mx-auto mb-4 text-neutral-400" />
+                    <p className="text-neutral-700 font-medium">拖放 Excel 檔案到此處</p>
+                    <p className="text-neutral-400 text-sm mt-1">或點擊選擇 .xlsx 檔案</p>
+                  </div>
+                  <div className="bg-neutral-50 rounded-xl p-4 space-y-2 text-sm text-neutral-600">
+                    <p className="font-bold text-neutral-700">Excel 模板格式說明</p>
+                    <p>Sheet 1（學員堂數）欄位：學員編號、課程名稱、總堂數、已用堂數、剩餘堂數、方案名稱、到期日</p>
+                    <p>Sheet 2（出席紀錄）欄位：學員編號、課程名稱、日期(YYYY-MM-DD)、狀態(出席/請假/缺席/補課)、備註</p>
+                    <p className="text-neutral-400">前 5 行為標題列，第 6 行起為資料</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Step 2: Preview */}
+              {importStep === 2 && (
+                <div className="space-y-4">
+                  {/* Stats */}
+                  <div className="flex gap-4">
+                    <div className="flex-1 bg-neutral-50 rounded-xl p-3 text-center">
+                      <p className="text-xs text-neutral-500">Sheet 1 學員堂數</p>
+                      <p className="font-bold">{importSheet1.length} 行</p>
+                      <p className="text-xs"><span className="text-green-600">{importSheet1Errors.filter(e => !e).length} 通過</span> / <span className="text-red-500">{importSheet1Errors.filter(e => e).length} 錯誤</span></p>
+                    </div>
+                    <div className="flex-1 bg-neutral-50 rounded-xl p-3 text-center">
+                      <p className="text-xs text-neutral-500">Sheet 2 出席紀錄</p>
+                      <p className="font-bold">{importSheet2.length} 行</p>
+                      <p className="text-xs"><span className="text-green-600">{importSheet2Errors.filter(e => !e).length} 通過</span> / <span className="text-red-500">{importSheet2Errors.filter(e => e).length} 錯誤</span></p>
+                    </div>
+                  </div>
+
+                  {/* Tab */}
+                  <div className="flex gap-2">
+                    <button onClick={() => setImportPreviewTab(1)} className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${importPreviewTab === 1 ? 'bg-primary text-white' : 'bg-neutral-100 text-neutral-600'}`}>Sheet 1 學員堂數</button>
+                    <button onClick={() => setImportPreviewTab(2)} className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${importPreviewTab === 2 ? 'bg-primary text-white' : 'bg-neutral-100 text-neutral-600'}`}>Sheet 2 出席紀錄</button>
+                  </div>
+
+                  {/* Table */}
+                  <div className="border rounded-xl overflow-x-auto max-h-[40vh] overflow-y-auto">
+                    {importPreviewTab === 1 ? (
+                      <table className="w-full text-xs">
+                        <thead className="bg-neutral-50 sticky top-0">
+                          <tr>
+                            <th className="p-2 text-left font-medium">行</th>
+                            <th className="p-2 text-left font-medium">狀態</th>
+                            <th className="p-2 text-left font-medium">學員編號</th>
+                            <th className="p-2 text-left font-medium">課程名稱</th>
+                            <th className="p-2 text-left font-medium">總堂數</th>
+                            <th className="p-2 text-left font-medium">已用堂數</th>
+                            <th className="p-2 text-left font-medium">方案</th>
+                            <th className="p-2 text-left font-medium">到期日</th>
+                            <th className="p-2 text-left font-medium">錯誤原因</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {importSheet1.map((row, i) => (
+                            <tr key={i} className={importSheet1Errors[i] ? 'bg-red-50' : ''}>
+                              <td className="p-2 text-neutral-400">{i + 6}</td>
+                              <td className="p-2">{importSheet1Errors[i] ? <span className="text-red-500">✗</span> : <span className="text-green-500">✓</span>}</td>
+                              <td className="p-2 font-mono">{row[0]}</td>
+                              <td className="p-2">{row[1]}</td>
+                              <td className="p-2">{row[2]}</td>
+                              <td className="p-2">{row[3]}</td>
+                              <td className="p-2">{row[5]}</td>
+                              <td className="p-2">{row[6]}</td>
+                              <td className="p-2 text-red-500">{importSheet1Errors[i]}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    ) : (
+                      <table className="w-full text-xs">
+                        <thead className="bg-neutral-50 sticky top-0">
+                          <tr>
+                            <th className="p-2 text-left font-medium">行</th>
+                            <th className="p-2 text-left font-medium">狀態</th>
+                            <th className="p-2 text-left font-medium">學員編號</th>
+                            <th className="p-2 text-left font-medium">課程名稱</th>
+                            <th className="p-2 text-left font-medium">日期</th>
+                            <th className="p-2 text-left font-medium">出席狀態</th>
+                            <th className="p-2 text-left font-medium">備註</th>
+                            <th className="p-2 text-left font-medium">錯誤原因</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {importSheet2.map((row, i) => (
+                            <tr key={i} className={importSheet2Errors[i] ? 'bg-red-50' : ''}>
+                              <td className="p-2 text-neutral-400">{i + 6}</td>
+                              <td className="p-2">{importSheet2Errors[i] ? <span className="text-red-500">✗</span> : <span className="text-green-500">✓</span>}</td>
+                              <td className="p-2 font-mono">{row[0]}</td>
+                              <td className="p-2">{row[1]}</td>
+                              <td className="p-2">{row[2]}</td>
+                              <td className="p-2">{row[3]}</td>
+                              <td className="p-2">{row[4]}</td>
+                              <td className="p-2 text-red-500">{importSheet2Errors[i]}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+
+                  {/* Footer buttons */}
+                  <div className="flex gap-3">
+                    <button onClick={() => { resetImport() }} className="flex-1 py-3 bg-neutral-100 rounded-xl font-medium">重新選擇</button>
+                    <button onClick={handleImportConfirm} className="flex-1 py-3 bg-primary text-white rounded-xl font-medium">
+                      確認匯入（{importSheet1Errors.filter(e => !e).length} 筆堂數 + {importSheet2Errors.filter(e => !e).length} 筆出席）
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Step 3: Importing */}
+              {importStep === 3 && (
+                <div className="flex flex-col items-center justify-center py-12 space-y-6">
+                  <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center">
+                    <Upload size={28} className="text-primary animate-pulse" />
+                  </div>
+                  <div className="text-center">
+                    <p className="text-lg font-bold text-neutral-900">正在匯入資料...</p>
+                    <p className="text-sm text-neutral-500 mt-1">{importProgressText}</p>
+                  </div>
+                  <div className="w-full max-w-md">
+                    <div className="w-full h-2 bg-neutral-100 rounded-full overflow-hidden">
+                      <div className="h-full bg-primary rounded-full transition-all" style={{ width: `${importProgress}%` }} />
+                    </div>
+                    <p className="text-xs text-neutral-400 text-center mt-2">{importProgress}%</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Step 4: Result */}
+              {importStep === 4 && importResult && (
+                <div className="space-y-6">
+                  <div className="flex flex-col items-center py-6">
+                    <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mb-4">
+                      <Check size={32} className="text-green-600" />
+                    </div>
+                    <p className="text-xl font-bold text-neutral-900">匯入完成</p>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-4">
+                    <div className="bg-neutral-50 rounded-xl p-4 space-y-1">
+                      <p className="text-sm font-bold text-neutral-700">報名紀錄</p>
+                      <p className="text-xs"><span className="text-green-600 font-medium">新增 {importResult.enrollNew}</span></p>
+                      <p className="text-xs"><span className="text-amber-600 font-medium">跳過 {importResult.enrollSkip}</span></p>
+                      <p className="text-xs"><span className="text-red-500 font-medium">失敗 {importResult.enrollFail}</span></p>
+                    </div>
+                    <div className="bg-neutral-50 rounded-xl p-4 space-y-1">
+                      <p className="text-sm font-bold text-neutral-700">堂數包</p>
+                      <p className="text-xs"><span className="text-green-600 font-medium">新增 {importResult.creditNew}</span></p>
+                      <p className="text-xs"><span className="text-blue-600 font-medium">更新 {importResult.creditUpdate}</span></p>
+                      <p className="text-xs"><span className="text-red-500 font-medium">失敗 {importResult.creditFail}</span></p>
+                    </div>
+                    <div className="bg-neutral-50 rounded-xl p-4 space-y-1">
+                      <p className="text-sm font-bold text-neutral-700">出席紀錄</p>
+                      <p className="text-xs"><span className="text-green-600 font-medium">新增 {importResult.attendNew}</span></p>
+                      <p className="text-xs"><span className="text-amber-600 font-medium">跳過 {importResult.attendSkip}</span></p>
+                      <p className="text-xs"><span className="text-red-500 font-medium">失敗 {importResult.attendFail}</span></p>
+                    </div>
+                  </div>
+
+                  {importResult.failures.length > 0 && (
+                    <div className="bg-red-50 rounded-xl p-4 space-y-2">
+                      <p className="text-sm font-bold text-red-700">失敗詳情</p>
+                      <div className="max-h-40 overflow-y-auto space-y-1">
+                        {importResult.failures.map((f, i) => (
+                          <p key={i} className="text-xs text-red-600">{f.sheet} 第 {f.row} 行：{f.reason}</p>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <button onClick={() => { resetImport(); setShowImportModal(false); fetchStudents() }} className="w-full py-3 bg-primary text-white rounded-xl font-medium">關閉</button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}

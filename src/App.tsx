@@ -21,6 +21,8 @@ import { BottomSheet } from './components/BottomSheet';
 
 import { Session, WaitlistEntry, Course, VenueContract } from './types';
 import { supabase } from './lib/supabase';
+import { validateName, validateEmail, validatePassword, validatePhone, validateBirthDate } from './lib/validators';
+import { getLineLoginUrl, exchangeLineToken, getLineProfile } from './lib/lineLogin';
 
 /* ── iOS-style wheel column ── */
 const ITEM_HEIGHT = 40
@@ -176,7 +178,6 @@ export default function App() {
   ]);
   const [isLoginOpen, setIsLoginOpen] = useState(false);
   const [isRegisterOpen, setIsRegisterOpen] = useState(false);
-  const [loginMode, setLoginMode] = useState<'admin' | 'student'>('student');
   const [loginData, setLoginData] = useState({ account: '', password: '' });
   const [registerData, setRegisterData] = useState({
     name: '',
@@ -186,17 +187,26 @@ export default function App() {
     students: [{ name: '', gender: '', birthDate: '', level: '', school: '' }] as {name: string, gender: string, birthDate: string, level: string, school: string}[],
   });
   const [registerStep, setRegisterStep] = useState<1 | 2>(1);
+  const [registerErrors, setRegisterErrors] = useState<Record<string, string>>({});
+  const [studentErrors, setStudentErrors] = useState<Record<string, string>[]>([{}]);
   const [registeredStudents, setRegisteredStudents] = useState<{name: string, student_code: string, student_number: string}[]>([]);
   const [showRegistrationResult, setShowRegistrationResult] = useState(false);
   const [loginStep, setLoginStep] = useState<1 | 2>(1);
-  const [verifyCode, setVerifyCode] = useState('');
+  const [otpCode, setOtpCode] = useState(['', '', '', '', '', '']);
   const [isSendingCode, setIsSendingCode] = useState(false);
+  const [otpCooldown, setOtpCooldown] = useState(0);
+  const [pendingAdminEmail, setPendingAdminEmail] = useState('');
+  const [pendingAdminUserId, setPendingAdminUserId] = useState('');
   const [userEmail, setUserEmail] = useState<string>('');
   const [userCategory, setUserCategory] = useState<'child' | 'adult' | ''>('');
 
+  // LINE Login
+  const [lineProfile, setLineProfile] = useState<{ userId: string; displayName: string; pictureUrl?: string } | null>(null);
+  const [showLineBindModal, setShowLineBindModal] = useState(false);
+  const [lineBindData, setLineBindData] = useState({ email: '', password: '' });
+
   useEffect(() => {
     const handleOpenLogin = () => {
-      setLoginMode('student');
       setIsLoginOpen(true);
     };
     const handleOpenRegister = () => {
@@ -215,20 +225,94 @@ export default function App() {
     };
   }, []);
 
+  // LINE callback 處理
+  useEffect(() => {
+    const handleLineCallback = async () => {
+      const params = new URLSearchParams(window.location.search);
+      const code = params.get('code');
+      const state = params.get('state');
+      const savedState = sessionStorage.getItem('line_state');
+
+      if (!code || !state) return;
+
+      // 清除 URL 參數
+      window.history.replaceState({}, '', window.location.pathname);
+
+      if (state !== savedState) {
+        alert('LINE 登入驗證失敗，請重試');
+        return;
+      }
+      sessionStorage.removeItem('line_state');
+
+      try {
+        const { access_token } = await exchangeLineToken(code);
+        const profile = await getLineProfile(access_token);
+        setLineProfile(profile);
+
+        const { data: linkedStudents } = await supabase
+          .from('students')
+          .select('parent_uid, name, student_code, category')
+          .eq('line_uid', profile.userId);
+
+        if (linkedStudents && linkedStudents.length > 0) {
+          setUserRole('student');
+          setUserEmail(profile.displayName + ' (LINE)');
+          const categories = linkedStudents.map(s => s.category);
+          setUserCategory(categories.includes('adult') ? 'adult' : 'child');
+          sessionStorage.setItem('line_user', JSON.stringify(profile));
+        } else {
+          setShowLineBindModal(true);
+        }
+      } catch (err) {
+        console.error('LINE login error:', err);
+        alert('LINE 登入失敗，請稍後再試');
+      }
+    };
+
+    handleLineCallback();
+  }, []);
+
   useEffect(() => {
     const checkSession = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       if (session) {
-        setUserRole('student');
-        setUserEmail(session.user.email || '');
+        const email = session.user.email || '';
+        setUserEmail(email);
 
-        // 查詢用戶類型
-        const { data: myStudents } = await supabase
-          .from('students')
-          .select('category')
-          .eq('parent_uid', session.user.id);
-        if (myStudents && myStudents.length > 0) {
-          setUserCategory(myStudents.some(s => s.category === 'adult') ? 'adult' : 'child');
+        // 檢查是否為已驗證管理員
+        const adminVerified = sessionStorage.getItem('admin_verified');
+        if (adminVerified === email) {
+          setUserRole('admin');
+          setIsAdminLoggedIn(true);
+          setActiveTab('admin-dashboard');
+        } else {
+          setUserRole('student');
+          // 查詢用戶類型
+          const { data: myStudents } = await supabase
+            .from('students')
+            .select('category')
+            .eq('parent_uid', session.user.id);
+          if (myStudents && myStudents.length > 0) {
+            setUserCategory(myStudents.some(s => s.category === 'adult') ? 'adult' : 'child');
+          }
+        }
+      } else {
+        // 檢查 LINE 登入狀態
+        const savedLineUser = sessionStorage.getItem('line_user');
+        if (savedLineUser) {
+          const profile = JSON.parse(savedLineUser);
+          const { data: linkedStudents } = await supabase
+            .from('students')
+            .select('parent_uid, category')
+            .eq('line_uid', profile.userId);
+          if (linkedStudents && linkedStudents.length > 0) {
+            setUserRole('student');
+            setUserEmail(profile.displayName + ' (LINE)');
+            setLineProfile(profile);
+            setUserCategory(linkedStudents.some((s: any) => s.category === 'adult') ? 'adult' : 'child');
+          } else {
+            sessionStorage.removeItem('line_user');
+          }
         }
       }
     };
@@ -323,77 +407,131 @@ export default function App() {
     setSelectedCourseId(undefined);
   };
 
-  const sendVerificationCode = () => {
-    setIsSendingCode(true);
-    // Simulate sending code
-    setTimeout(() => {
-      setIsSendingCode(false);
-      alert('驗證碼已發送至您的 Gmail 信箱！(提示：123456)');
-      setLoginStep(2);
+  const generateAndSendOtp = async (userId: string, email: string) => {
+    const otp = String(Math.floor(100000 + Math.random() * 900000));
+    await supabase.from('user_roles').update({
+      otp_code: otp,
+      otp_expires_at: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+      otp_verified: false,
+    }).eq('user_id', userId);
+    console.log(`[管理員 OTP] ${email}: ${otp}`);
+    return otp;
+  };
+
+  const startOtpCooldown = () => {
+    setOtpCooldown(60);
+    const timer = setInterval(() => {
+      setOtpCooldown(prev => {
+        if (prev <= 1) { clearInterval(timer); return 0; }
+        return prev - 1;
+      });
     }, 1000);
   };
 
   const handleLogin = async () => {
-    // 管理員登入判斷：暫時用帳號 a11 判斷
-    if (loginMode === 'admin') {
-      if (loginData.account === 'a11' && loginData.password === 'a11') {
-        // 寫入 user_roles（如果不存在）— 表可能尚未建立，忽略錯誤
-        try {
-          const { data: existingRole } = await supabase
-            .from('user_roles')
-            .select('id')
-            .eq('role', 'super_admin')
-            .single();
+    if (loginStep === 2) {
+      // Step 2: 驗證 OTP
+      const code = otpCode.join('');
+      if (code.length !== 6) return;
 
-          if (!existingRole) {
-            await supabase.from('user_roles').insert({
-              user_id: '00000000-0000-0000-0000-000000000000',
-              role: 'super_admin',
-              name: 'Admin',
-              email: 'admin',
-            });
-          }
-        } catch (e) {
-          console.warn('user_roles 表查詢失敗，跳過:', e)
-        }
+      setIsSendingCode(true);
+      const { data: otpData } = await supabase
+        .from('user_roles')
+        .select('otp_code, otp_expires_at')
+        .eq('user_id', pendingAdminUserId)
+        .single();
 
+      if (!otpData || otpData.otp_code !== code) {
+        alert('驗證碼錯誤，請重新輸入');
+        setOtpCode(['', '', '', '', '', '']);
+        setIsSendingCode(false);
+        return;
+      }
+
+      if (otpData.otp_expires_at && new Date(otpData.otp_expires_at) < new Date()) {
+        alert('驗證碼已過期，請重新發送');
+        setOtpCode(['', '', '', '', '', '']);
+        setIsSendingCode(false);
+        return;
+      }
+
+      // OTP 驗證通過，清除 OTP
+      await supabase.from('user_roles').update({ otp_code: null, otp_expires_at: null, otp_verified: true }).eq('user_id', pendingAdminUserId);
+
+      sessionStorage.setItem('admin_verified', pendingAdminEmail);
+      setUserRole('admin');
+      setIsAdminLoggedIn(true);
+      setActiveTab('admin-dashboard');
+      setUserEmail(pendingAdminEmail);
+      setIsLoginOpen(false);
+      setLoginData({ account: '', password: '' });
+      setLoginStep(1);
+      setOtpCode(['', '', '', '', '', '']);
+      setPendingAdminEmail('');
+      setPendingAdminUserId('');
+      setIsSendingCode(false);
+      return;
+    }
+
+    // Step 1: Email + 密碼
+    setIsSendingCode(true);
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: loginData.account,
+      password: loginData.password,
+    });
+
+    if (error) {
+      alert('帳號或密碼錯誤');
+      setIsSendingCode(false);
+      return;
+    }
+
+    // 檢查是否為管理員
+    const { data: roleData } = await supabase
+      .from('user_roles')
+      .select('role, requires_otp')
+      .eq('user_id', data.user.id)
+      .in('role', ['super_admin', 'admin'])
+      .maybeSingle();
+
+    if (roleData) {
+      if (roleData.requires_otp === false) {
+        // 不需要 OTP → 直接進入管理員
+        sessionStorage.setItem('admin_verified', loginData.account);
         setUserRole('admin');
         setIsAdminLoggedIn(true);
         setActiveTab('admin-dashboard');
-        setUserEmail('admin');
+        setUserEmail(loginData.account);
         setIsLoginOpen(false);
         setLoginData({ account: '', password: '' });
-        setLoginStep(1);
-        return;
-      } else {
-        alert('管理員帳號或密碼錯誤！');
+        setIsSendingCode(false);
         return;
       }
-    } else {
-      // 學員登入：用 email + password
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: loginData.account,
-        password: loginData.password,
-      });
-      if (error) {
-        alert('學員帳號或密碼錯誤！請用註冊時的 Email 和密碼登入。');
-        return;
-      }
-      setUserRole('student');
-      setUserEmail(loginData.account);
-
-      // 查詢用戶類型
-      const { data: myStudents } = await supabase
-        .from('students')
-        .select('category')
-        .eq('parent_uid', data.user?.id);
-      if (myStudents && myStudents.length > 0) {
-        setUserCategory(myStudents.some(s => s.category === 'adult') ? 'adult' : 'child');
-      }
-
-      setIsLoginOpen(false);
-      setLoginData({ account: '', password: '' });
+      // 需要 OTP → 發送 OTP 進入第二步
+      await generateAndSendOtp(data.user.id, loginData.account);
+      setPendingAdminUserId(data.user.id);
+      setPendingAdminEmail(loginData.account);
+      startOtpCooldown();
+      setLoginStep(2);
+      setIsSendingCode(false);
+      return;
     }
+
+    // 不是管理員 → 普通學員登入
+    setUserRole('student');
+    setUserEmail(loginData.account);
+
+    const { data: myStudents } = await supabase
+      .from('students')
+      .select('category')
+      .eq('parent_uid', data.user?.id);
+    if (myStudents && myStudents.length > 0) {
+      setUserCategory(myStudents.some(s => s.category === 'adult') ? 'adult' : 'child');
+    }
+
+    setIsLoginOpen(false);
+    setLoginData({ account: '', password: '' });
+    setIsSendingCode(false);
   };
 
   const addStudent = () => {
@@ -401,6 +539,7 @@ export default function App() {
       ...prev,
       students: [...prev.students, { name: '', gender: '', birthDate: '', level: '', school: '' }]
     }));
+    setStudentErrors(prev => [...prev, {}]);
   };
 
   const removeStudent = (index: number) => {
@@ -409,6 +548,7 @@ export default function App() {
       ...prev,
       students: prev.students.filter((_, i) => i !== index)
     }));
+    setStudentErrors(prev => prev.filter((_, i) => i !== index));
   };
 
   const updateStudent = (index: number, field: string, value: string) => {
@@ -435,31 +575,38 @@ export default function App() {
     setRegisterStep(1);
     setShowRegistrationResult(false);
     setRegisteredStudents([]);
+    setRegisterErrors({});
+    setStudentErrors([{}]);
   };
 
   const handleRegisterUser = async () => {
     if (registerStep === 1) {
-      if (!registerData.name || !registerData.email || !registerData.password || !registerData.phone) {
-        alert('請填寫所有欄位！');
-        return;
-      }
-      if (registerData.password.length < 6) {
-        alert('密碼至少需要 6 位');
-        return;
-      }
+      const errs: Record<string, string> = {};
+      const nameErr = validateName(registerData.name, '姓名');
+      if (nameErr) errs.name = nameErr;
+      const emailErr = validateEmail(registerData.email);
+      if (emailErr) errs.email = emailErr;
+      const pwErr = validatePassword(registerData.password);
+      if (pwErr) errs.password = pwErr;
+      const phoneErr = validatePhone(registerData.phone, true);
+      if (phoneErr) errs.phone = phoneErr;
+      setRegisterErrors(errs);
+      if (Object.keys(errs).length > 0) return;
       setRegisterStep(2);
       return;
     }
 
     // 步驟二驗證
-    if (registerData.students.some(s => !s.name)) {
-      alert('請填寫所有學員的姓名！');
-      return;
-    }
-    if (registerData.students.some(s => !s.birthDate)) {
-      alert('請填寫所有學員的出生日期！');
-      return;
-    }
+    const sErrs = registerData.students.map(s => {
+      const e: Record<string, string> = {};
+      const nameErr = validateName(s.name, '學員姓名');
+      if (nameErr) e.name = nameErr;
+      const bdErr = validateBirthDate(s.birthDate, true);
+      if (bdErr) e.birthDate = bdErr;
+      return e;
+    });
+    setStudentErrors(sErrs);
+    if (sErrs.some(e => Object.keys(e).length > 0)) return;
 
     const { data: existingStudent } = await supabase
       .from('students')
@@ -569,12 +716,58 @@ export default function App() {
     setShowRegistrationResult(true);
   };
 
+  const handleLineBind = async () => {
+    if (!lineProfile) return;
+
+    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+      email: lineBindData.email,
+      password: lineBindData.password,
+    });
+
+    if (authError) {
+      alert('帳號或密碼錯誤，請確認後重試');
+      return;
+    }
+
+    const { error: updateError } = await supabase
+      .from('students')
+      .update({ line_uid: lineProfile.userId })
+      .eq('parent_uid', authData.user.id);
+
+    if (updateError) {
+      console.error('LINE bind error:', updateError);
+      alert('綁定失敗：' + updateError.message);
+      return;
+    }
+
+    setUserRole('student');
+    setUserEmail(authData.user.email || '');
+    setShowLineBindModal(false);
+    setLineBindData({ email: '', password: '' });
+
+    const { data: myStudents } = await supabase
+      .from('students')
+      .select('category')
+      .eq('parent_uid', authData.user.id);
+    if (myStudents && myStudents.length > 0) {
+      setUserCategory(myStudents.some(s => s.category === 'adult') ? 'adult' : 'child');
+    }
+
+    sessionStorage.setItem('line_user', JSON.stringify(lineProfile));
+    alert('LINE 帳號綁定成功！下次可直接用 LINE 登入');
+  };
+
   const handleLogout = async () => {
     await supabase.auth.signOut();
+    sessionStorage.removeItem('line_user');
+    sessionStorage.removeItem('admin_verified');
+    setLineProfile(null);
     setUserRole('user');
     setIsAdminLoggedIn(false);
     setUserCategory('');
     setActiveTab('home');
+    setPendingAdminUserId('');
+    setPendingAdminEmail('');
   };
 
   const getPageTitle = () => {
@@ -602,10 +795,7 @@ export default function App() {
               註冊
             </button>
             <button
-              onClick={() => {
-                setLoginMode('student');
-                setIsLoginOpen(true);
-              }}
+              onClick={() => setIsLoginOpen(true)}
               className="text-sm font-medium text-white bg-primary hover:bg-blue-700 transition-colors px-3 py-1.5 rounded-lg shadow-sm"
             >
               登入
@@ -660,6 +850,20 @@ export default function App() {
   };
 
   const renderContent = () => {
+    // 前端路由防護：admin- 開頭的頁面需要管理員權限
+    if (activeTab.startsWith('admin-') && userRole !== 'admin') {
+      return (
+        <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4">
+          <div className="w-16 h-16 rounded-2xl flex items-center justify-center bg-red-100 text-red-500 mb-4">
+            <ShieldCheck size={32} />
+          </div>
+          <p className="text-lg font-bold text-neutral-900 mb-2">無權限存取</p>
+          <p className="text-sm text-neutral-500 mb-6">此頁面僅限管理員使用，請先登入管理員帳號。</p>
+          <Button variant="primary" onClick={() => setActiveTab('home')}>返回首頁</Button>
+        </div>
+      );
+    }
+
     if (userRole === 'admin') {
       switch (activeTab) {
         case 'admin-dashboard': return <AdminDashboard />;
@@ -732,35 +936,20 @@ export default function App() {
       </Layout>
 
       {/* Login Bottom Sheet */}
-      <BottomSheet 
-        isOpen={isLoginOpen} 
+      <BottomSheet
+        isOpen={isLoginOpen}
         onClose={() => {
           setIsLoginOpen(false);
           setLoginStep(1);
-          setVerifyCode('');
+          setOtpCode(['', '', '', '', '', '']);
+          setPendingAdminEmail('');
+          setPendingAdminUserId('');
         }}
-        title={loginMode === 'admin' ? (loginStep === 1 ? '管理員登入' : 'Gmail 身份驗證') : '學員登入'}
+        title={loginStep === 1 ? '登入' : '安全驗證'}
       >
         <div className="space-y-6">
-          {loginStep === 1 && (
-            <div className="flex bg-neutral-100 p-1 rounded-xl">
-              <button 
-                onClick={() => setLoginMode('student')}
-                className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${loginMode === 'student' ? 'bg-white text-primary shadow-sm' : 'text-neutral-500'}`}
-              >
-                學員登入
-              </button>
-              <button 
-                onClick={() => setLoginMode('admin')}
-                className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${loginMode === 'admin' ? 'bg-white text-danger shadow-sm' : 'text-neutral-500'}`}
-              >
-                管理員登入
-              </button>
-            </div>
-          )}
-
           <div className="flex flex-col items-center gap-4 py-4">
-            <div className={`w-16 h-16 rounded-2xl flex items-center justify-center ${loginMode === 'admin' ? 'bg-danger/10 text-danger' : 'bg-primary/10 text-primary'}`}>
+            <div className={`w-16 h-16 rounded-2xl flex items-center justify-center ${loginStep === 2 ? 'bg-danger/10 text-danger' : 'bg-primary/10 text-primary'}`}>
               <ShieldCheck size={32} />
             </div>
             <div className="text-center">
@@ -768,26 +957,29 @@ export default function App() {
                 {loginStep === 1 ? '歡迎回來' : '安全驗證'}
               </p>
               <p className="text-sm text-neutral-600">
-                {loginMode === 'admin' 
-                  ? (loginStep === 1 ? '請輸入管理員帳號與密碼' : '請輸入發送至您 Gmail 的 6 位數驗證碼') 
-                  : '請輸入學員帳號與密碼'}
+                {loginStep === 1
+                  ? '請輸入 Email 與密碼，系統自動判斷角色'
+                  : `驗證碼已發送至 ${pendingAdminEmail}`}
               </p>
+              {loginStep === 2 && (
+                <p className="text-xs text-amber-600 mt-1">開發模式：請查看瀏覽器 Console</p>
+              )}
             </div>
           </div>
 
           <div className="space-y-4">
             {loginStep === 1 ? (
               <>
-                <FormField label={loginMode === 'admin' ? '管理員帳號' : 'Email'}>
+                <FormField label="Email">
                   <Input
-                    placeholder="請輸入 Email" 
+                    placeholder="請輸入 Email"
                     value={loginData.account}
                     onChange={e => setLoginData({...loginData, account: e.target.value})}
                   />
                 </FormField>
                 <FormField label="密碼">
-                  <Input 
-                    type="password" 
+                  <Input
+                    type="password"
                     placeholder="請輸入密碼"
                     value={loginData.password}
                     onChange={e => setLoginData({...loginData, password: e.target.value})}
@@ -795,39 +987,94 @@ export default function App() {
                 </FormField>
               </>
             ) : (
-              <FormField label="Gmail 驗證碼">
-                <Input 
-                  placeholder="請輸入 6 位數驗證碼 (123456)" 
-                  value={verifyCode}
-                  maxLength={6}
-                  onChange={e => setVerifyCode(e.target.value)}
-                />
-              </FormField>
+              <div>
+                <p className="text-xs font-medium text-neutral-500 mb-2">6 位數驗證碼</p>
+                <div className="flex gap-2 justify-center">
+                  {otpCode.map((digit, i) => (
+                    <input
+                      key={i}
+                      id={`otp-${i}`}
+                      type="text"
+                      inputMode="numeric"
+                      maxLength={1}
+                      value={digit}
+                      className="w-12 h-14 text-center text-xl font-bold border-2 border-neutral-200 rounded-xl focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all"
+                      onChange={e => {
+                        const val = e.target.value.replace(/\D/g, '');
+                        const newCode = [...otpCode];
+                        newCode[i] = val;
+                        setOtpCode(newCode);
+                        if (val && i < 5) document.getElementById(`otp-${i + 1}`)?.focus();
+                      }}
+                      onKeyDown={e => {
+                        if (e.key === 'Backspace' && !otpCode[i] && i > 0) {
+                          document.getElementById(`otp-${i - 1}`)?.focus();
+                        }
+                      }}
+                    />
+                  ))}
+                </div>
+              </div>
             )}
           </div>
 
           <div className="flex flex-col gap-3">
-            <Button 
-              onClick={handleLogin} 
+            <Button
+              onClick={handleLogin}
               icon={LogIn}
               loading={isSendingCode}
-              variant={loginMode === 'admin' ? 'primary' : 'primary'}
-              className={loginMode === 'admin' ? 'bg-danger hover:bg-danger/90' : ''}
+              variant="primary"
+              className={loginStep === 2 ? 'bg-danger hover:bg-danger/90' : ''}
             >
               {loginStep === 1 ? '確認登入' : '驗證並登入'}
             </Button>
-            
+
             {loginStep === 2 && (
-              <Button 
-                variant="ghost" 
-                onClick={() => setLoginStep(1)}
-                className="text-neutral-500"
-              >
-                返回上一步
-              </Button>
+              <>
+                <div className="flex items-center justify-center gap-4">
+                  <button
+                    onClick={async () => {
+                      if (otpCooldown > 0) return;
+                      await generateAndSendOtp(pendingAdminUserId, pendingAdminEmail);
+                      startOtpCooldown();
+                    }}
+                    disabled={otpCooldown > 0}
+                    className={`text-sm font-medium ${otpCooldown > 0 ? 'text-neutral-400' : 'text-primary hover:text-primary/80'}`}
+                  >
+                    {otpCooldown > 0 ? `重新發送 (${otpCooldown}s)` : '重新發送驗證碼'}
+                  </button>
+                </div>
+                <Button
+                  variant="ghost"
+                  onClick={() => { setLoginStep(1); setOtpCode(['', '', '', '', '', '']); setPendingAdminEmail(''); setPendingAdminUserId(''); }}
+                  className="text-neutral-500"
+                >
+                  返回上一步
+                </Button>
+              </>
+            )}
+
+            {loginStep === 1 && (
+              <>
+                <div className="flex items-center gap-3 my-2">
+                  <div className="flex-1 h-px bg-neutral-200" />
+                  <span className="text-xs text-neutral-400">或</span>
+                  <div className="flex-1 h-px bg-neutral-200" />
+                </div>
+                <button
+                  onClick={() => { setIsLoginOpen(false); window.location.href = getLineLoginUrl(); }}
+                  className="w-full flex items-center justify-center gap-2 py-3 rounded-xl font-semibold text-sm transition-all hover:opacity-90"
+                  style={{ backgroundColor: '#06C755', color: 'white' }}
+                >
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="white">
+                    <path d="M19.365 9.863c.349 0 .63.285.63.631 0 .345-.281.63-.63.63H17.61v1.125h1.755c.349 0 .63.283.63.63 0 .344-.281.629-.63.629h-2.386c-.345 0-.627-.285-.627-.629V8.108c0-.345.282-.63.627-.63h2.386c.349 0 .63.285.63.63 0 .349-.281.63-.63.63H17.61v1.125h1.755zm-3.855 3.016c0 .27-.174.51-.432.596-.064.021-.133.031-.199.031-.211 0-.391-.09-.51-.25l-2.443-3.317v2.94c0 .344-.279.629-.631.629-.346 0-.626-.285-.626-.629V8.108c0-.27.173-.51.43-.595.06-.023.136-.033.194-.033.195 0 .375.104.495.254l2.462 3.33V8.108c0-.345.282-.63.63-.63.345 0 .63.285.63.63v4.771zm-5.741 0c0 .344-.282.629-.631.629-.345 0-.627-.285-.627-.629V8.108c0-.345.282-.63.627-.63.349 0 .631.285.631.63v4.771zm-2.466.629H4.917c-.345 0-.63-.285-.63-.629V8.108c0-.345.285-.63.63-.63.348 0 .63.285.63.63v4.141h1.756c.348 0 .629.283.629.63 0 .344-.282.629-.629.629M24 10.314C24 4.943 18.615.572 12 .572S0 4.943 0 10.314c0 4.811 4.27 8.842 10.035 9.608.391.082.923.258 1.058.59.12.301.079.766.038 1.08l-.164 1.02c-.045.301-.24 1.186 1.049.645 1.291-.539 6.916-4.078 9.436-6.975C23.176 14.393 24 12.458 24 10.314"/>
+                  </svg>
+                  LINE 登入
+                </button>
+              </>
             )}
           </div>
-          
+
           <p className="text-center text-xs text-neutral-400">
             忘記密碼？請聯繫系統管理員
           </p>
@@ -883,7 +1130,7 @@ export default function App() {
                 <p className="text-amber-800 text-sm text-center">學員編號為報名及管理的唯一識別碼，請妥善保存。</p>
               </div>
               <div className="space-y-3 pt-2">
-                <Button variant="primary" onClick={() => { resetRegisterForm(); setIsRegisterOpen(false); setLoginMode('student'); setIsLoginOpen(true); }}>前往登入</Button>
+                <Button variant="primary" onClick={() => { resetRegisterForm(); setIsRegisterOpen(false); setIsLoginOpen(true); }}>前往登入</Button>
                 <Button variant="ghost" onClick={() => { resetRegisterForm(); setIsRegisterOpen(false); }}>返回首頁</Button>
               </div>
             </div>
@@ -893,19 +1140,54 @@ export default function App() {
               <div className="bg-neutral-50 rounded-xl p-4 space-y-3">
                 <p className="font-bold text-sm text-neutral-700">帳號資訊</p>
                 <FormField label="真實姓名">
-                  <Input placeholder="請填寫真實姓名" value={registerData.name} onChange={e => setRegisterData({...registerData, name: e.target.value})} />
+                  <Input placeholder="請填寫真實姓名" value={registerData.name}
+                    className={registerErrors.name ? 'border-red-400 ring-1 ring-red-200' : ''}
+                    onChange={e => { setRegisterData({...registerData, name: e.target.value}); if (registerErrors.name) { const err = validateName(e.target.value, '姓名'); setRegisterErrors(prev => { const n = {...prev}; if (err) n.name = err; else delete n.name; return n; }); } }}
+                    onBlur={() => { const err = validateName(registerData.name, '姓名'); setRegisterErrors(prev => { const n = {...prev}; if (err) n.name = err; else delete n.name; return n; }); }}
+                  />
+                  {registerErrors.name && <p className="text-xs text-red-500 mt-1">{registerErrors.name}</p>}
                 </FormField>
                 <FormField label="電子信箱（用於登入）">
-                  <Input type="email" placeholder="請輸入 Email" value={registerData.email} onChange={e => setRegisterData({...registerData, email: e.target.value})} />
+                  <Input type="email" placeholder="請輸入 Email" value={registerData.email}
+                    className={registerErrors.email ? 'border-red-400 ring-1 ring-red-200' : ''}
+                    onChange={e => { setRegisterData({...registerData, email: e.target.value}); if (registerErrors.email) { const err = validateEmail(e.target.value); setRegisterErrors(prev => { const n = {...prev}; if (err) n.email = err; else delete n.email; return n; }); } }}
+                    onBlur={() => { const err = validateEmail(registerData.email); setRegisterErrors(prev => { const n = {...prev}; if (err) n.email = err; else delete n.email; return n; }); }}
+                  />
+                  {registerErrors.email && <p className="text-xs text-red-500 mt-1">{registerErrors.email}</p>}
                 </FormField>
                 <FormField label="密碼（至少 6 位）">
-                  <Input type="password" placeholder="請輸入密碼" value={registerData.password} onChange={e => setRegisterData({...registerData, password: e.target.value})} />
+                  <Input type="password" placeholder="請輸入密碼" value={registerData.password}
+                    className={registerErrors.password ? 'border-red-400 ring-1 ring-red-200' : ''}
+                    onChange={e => { setRegisterData({...registerData, password: e.target.value}); if (registerErrors.password) { const err = validatePassword(e.target.value); setRegisterErrors(prev => { const n = {...prev}; if (err) n.password = err; else delete n.password; return n; }); } }}
+                    onBlur={() => { const err = validatePassword(registerData.password); setRegisterErrors(prev => { const n = {...prev}; if (err) n.password = err; else delete n.password; return n; }); }}
+                  />
+                  {registerErrors.password && <p className="text-xs text-red-500 mt-1">{registerErrors.password}</p>}
                 </FormField>
                 <FormField label="聯絡電話">
-                  <Input type="tel" placeholder="請輸入手機號碼" value={registerData.phone} onChange={e => setRegisterData({...registerData, phone: e.target.value})} />
+                  <Input type="tel" placeholder="請輸入手機號碼" value={registerData.phone}
+                    className={registerErrors.phone ? 'border-red-400 ring-1 ring-red-200' : ''}
+                    onChange={e => { setRegisterData({...registerData, phone: e.target.value}); if (registerErrors.phone) { const err = validatePhone(e.target.value, true); setRegisterErrors(prev => { const n = {...prev}; if (err) n.phone = err; else delete n.phone; return n; }); } }}
+                    onBlur={() => { const err = validatePhone(registerData.phone, true); setRegisterErrors(prev => { const n = {...prev}; if (err) n.phone = err; else delete n.phone; return n; }); }}
+                  />
+                  {registerErrors.phone && <p className="text-xs text-red-500 mt-1">{registerErrors.phone}</p>}
                 </FormField>
               </div>
               <Button onClick={handleRegisterUser} variant="primary">下一步：新增學員</Button>
+              <div className="flex items-center gap-3 my-2">
+                <div className="flex-1 h-px bg-neutral-200" />
+                <span className="text-xs text-neutral-400">或</span>
+                <div className="flex-1 h-px bg-neutral-200" />
+              </div>
+              <button
+                onClick={() => { setIsRegisterOpen(false); window.location.href = getLineLoginUrl(); }}
+                className="w-full flex items-center justify-center gap-2 py-3 rounded-xl font-semibold text-sm transition-all hover:opacity-90"
+                style={{ backgroundColor: '#06C755', color: 'white' }}
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="white">
+                  <path d="M19.365 9.863c.349 0 .63.285.63.631 0 .345-.281.63-.63.63H17.61v1.125h1.755c.349 0 .63.283.63.63 0 .344-.281.629-.63.629h-2.386c-.345 0-.627-.285-.627-.629V8.108c0-.345.282-.63.627-.63h2.386c.349 0 .63.285.63.63 0 .349-.281.63-.63.63H17.61v1.125h1.755zm-3.855 3.016c0 .27-.174.51-.432.596-.064.021-.133.031-.199.031-.211 0-.391-.09-.51-.25l-2.443-3.317v2.94c0 .344-.279.629-.631.629-.346 0-.626-.285-.626-.629V8.108c0-.27.173-.51.43-.595.06-.023.136-.033.194-.033.195 0 .375.104.495.254l2.462 3.33V8.108c0-.345.282-.63.63-.63.345 0 .63.285.63.63v4.771zm-5.741 0c0 .344-.282.629-.631.629-.345 0-.627-.285-.627-.629V8.108c0-.345.282-.63.627-.63.349 0 .631.285.631.63v4.771zm-2.466.629H4.917c-.345 0-.63-.285-.63-.629V8.108c0-.345.285-.63.63-.63.348 0 .63.285.63.63v4.141h1.756c.348 0 .629.283.629.63 0 .344-.282.629-.629.629M24 10.314C24 4.943 18.615.572 12 .572S0 4.943 0 10.314c0 4.811 4.27 8.842 10.035 9.608.391.082.923.258 1.058.59.12.301.079.766.038 1.08l-.164 1.02c-.045.301-.24 1.186 1.049.645 1.291-.539 6.916-4.078 9.436-6.975C23.176 14.393 24 12.458 24 10.314"/>
+                </svg>
+                LINE 登入
+              </button>
             </div>
           ) : (
             /* === 步驟二：新增學員 === */
@@ -944,14 +1226,20 @@ export default function App() {
                     </div>
 
                     <FormField label="真實姓名">
-                      <Input placeholder="請填寫學員真實姓名" value={student.name} onChange={e => updateStudent(index, 'name', e.target.value)} />
+                      <Input placeholder="請填寫學員真實姓名" value={student.name}
+                        className={studentErrors[index]?.name ? 'border-red-400 ring-1 ring-red-200' : ''}
+                        onChange={e => { updateStudent(index, 'name', e.target.value); if (studentErrors[index]?.name) { const err = validateName(e.target.value, '學員姓名'); setStudentErrors(prev => { const n = [...prev]; n[index] = {...(n[index] || {})}; if (err) n[index].name = err; else delete n[index].name; return n; }); } }}
+                        onBlur={() => { const err = validateName(student.name, '學員姓名'); setStudentErrors(prev => { const n = [...prev]; n[index] = {...(n[index] || {})}; if (err) n[index].name = err; else delete n[index].name; return n; }); }}
+                      />
+                      {studentErrors[index]?.name && <p className="text-xs text-red-500 mt-1">{studentErrors[index].name}</p>}
                     </FormField>
 
                     <RegisterDateWheelPicker
                       label="出生日期"
                       value={student.birthDate || '2010-01-01'}
-                      onChange={(dateStr) => updateStudent(index, 'birthDate', dateStr)}
+                      onChange={(dateStr) => { updateStudent(index, 'birthDate', dateStr); if (studentErrors[index]?.birthDate) { const err = validateBirthDate(dateStr, true); setStudentErrors(prev => { const n = [...prev]; n[index] = {...(n[index] || {})}; if (err) n[index].birthDate = err; else delete n[index].birthDate; return n; }); } }}
                     />
+                    {studentErrors[index]?.birthDate && <p className="text-xs text-red-500 mt-1">{studentErrors[index].birthDate}</p>}
                     <FormField label="性別">
                       <div className="flex gap-1">
                         {['男', '女'].map(g => (
@@ -986,6 +1274,38 @@ export default function App() {
               <Button onClick={handleRegisterUser} icon={User} variant="primary">完成註冊</Button>
             </div>
           )}
+        </div>
+      </BottomSheet>
+
+      {/* LINE Bind Modal */}
+      <BottomSheet
+        isOpen={showLineBindModal}
+        onClose={() => setShowLineBindModal(false)}
+        title="綁定 LINE 帳號"
+      >
+        <div className="space-y-6">
+          <div className="flex flex-col items-center gap-4 py-4">
+            {lineProfile?.pictureUrl && (
+              <img src={lineProfile.pictureUrl} className="w-16 h-16 rounded-full" alt="" />
+            )}
+            <div className="text-center">
+              <p className="text-lg font-bold text-neutral-900">{lineProfile?.displayName}</p>
+              <p className="text-sm text-neutral-500">首次使用 LINE 登入，請綁定現有帳號</p>
+              <p className="text-xs text-neutral-400 mt-1">輸入你註冊時的 Email 和密碼</p>
+            </div>
+          </div>
+          <div className="space-y-4">
+            <FormField label="Email">
+              <Input placeholder="註冊時的 Email" value={lineBindData.email} onChange={e => setLineBindData({...lineBindData, email: e.target.value})} />
+            </FormField>
+            <FormField label="密碼">
+              <Input type="password" placeholder="密碼" value={lineBindData.password} onChange={e => setLineBindData({...lineBindData, password: e.target.value})} />
+            </FormField>
+          </div>
+          <Button onClick={handleLineBind} variant="primary">確認綁定</Button>
+          <p className="text-center text-xs text-neutral-400">
+            還沒有帳號？請先<button className="text-primary font-medium" onClick={() => { setShowLineBindModal(false); setIsRegisterOpen(true); }}>註冊</button>，註冊後再用 LINE 登入綁定
+          </p>
         </div>
       </BottomSheet>
     </>

@@ -331,6 +331,19 @@ export const RegisterPage: React.FC<{ courses: Course[]; initialCourseId?: strin
       return
     }
 
+    // 檢查首次報名限定
+    if (promo.first_enrollment_only) {
+      const { data: existingEnrollments } = await supabase
+        .from('enrollments')
+        .select('id')
+        .in('student_id', selectedStudentIds)
+        .limit(1)
+      if (existingEnrollments && existingEnrollments.length > 0) {
+        setPromoError('此優惠碼僅限首次報名學員使用')
+        return
+      }
+    }
+
     setPromoResult(promo)
   }
 
@@ -394,15 +407,18 @@ export const RegisterPage: React.FC<{ courses: Course[]; initialCourseId?: strin
       }
 
       // 為每位選擇的學員建立報名紀錄
+      const enrollmentIds: string[] = [];
       for (const studentId of selectedStudentIds) {
-        const { error: enrollError } = await supabase
+        const { data: enrollData, error: enrollError } = await supabase
           .from('enrollments')
           .insert({
             student_id: studentId,
             course_id: formData.courseId,
             status: '已報名',
             notes: formData.note || '',
-          });
+          })
+          .select('id')
+          .single();
 
         if (enrollError) {
           console.error('報名失敗:', enrollError);
@@ -413,6 +429,7 @@ export const RegisterPage: React.FC<{ courses: Course[]; initialCourseId?: strin
           }
           return;
         }
+        if (enrollData) enrollmentIds.push(enrollData.id);
       }
 
       // 為每位學員寫入堂數（使用 course_plans 資料）
@@ -542,6 +559,7 @@ export const RegisterPage: React.FC<{ courses: Course[]; initialCourseId?: strin
         await supabase.from('promo_code_usage').insert({
           promo_code_id: promoResult.id,
           student_id: selectedStudentIds[0],
+          enrollment_id: enrollmentIds[0] || null,
           discount_amount: discountAmount,
           original_amount: totalPrice,
           final_amount: finalPrice,
@@ -1045,9 +1063,9 @@ export const RegisterPage: React.FC<{ courses: Course[]; initialCourseId?: strin
                   <div className="bg-green-50 border border-green-200 rounded-xl p-3">
                     <p className="text-green-700 font-medium text-sm">✓ {promoResult.name}</p>
                     <p className="text-green-600 text-xs">
-                      {promoResult.type === 'percentage' && `打 ${100 - promoResult.value} 折`}
-                      {promoResult.type === 'fixed' && `折扣 NT$ ${promoResult.value}`}
-                      {promoResult.type === 'free_sessions' && `贈送 ${promoResult.value} 堂`}
+                      {promoResult.type === 'percentage' && `打 ${10 - promoResult.value / 10} 折，折扣 NT$ ${discountAmount.toLocaleString()}`}
+                      {promoResult.type === 'fixed' && `折扣 NT$ ${promoResult.value.toLocaleString()}`}
+                      {promoResult.type === 'free_sessions' && `贈送 ${promoResult.value} 堂課`}
                     </p>
                   </div>
                 )}

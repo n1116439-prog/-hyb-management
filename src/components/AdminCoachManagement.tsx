@@ -3,6 +3,7 @@ import { Plus, Search, Filter, Edit2, Trash2, Mail, Phone, User, Check, X, Chevr
 import { motion } from 'motion/react';
 import { Button, Input, Badge, FormField } from './UI';
 import { supabase } from '../lib/supabase';
+import { validateName, validatePhone, validateEmail, validateIdNumber, validateBirthDate, validateAddress, validateRequired, validateBankAccount } from '../lib/validators';
 
 /* ── iOS-style wheel column ── */
 const ITEM_HEIGHT = 40
@@ -189,6 +190,7 @@ export const AdminCoachManagement: React.FC = () => {
   const [saving, setSaving] = useState(false)
   const [showSuccess, setShowSuccess] = useState(false)
   const [successInfo, setSuccessInfo] = useState({ name: '', employment_type: '', hire_date: '' })
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({})
 
   const fetchCoaches = async () => {
     setLoading(true)
@@ -213,20 +215,38 @@ export const AdminCoachManagement: React.FC = () => {
     setTagInput('')
     setCertInput('')
     setShowSuccess(false)
+    setFormErrors({})
   }
 
   const validateStep = (s: number): boolean => {
+    const errs: Record<string, string> = {}
     if (s === 1) {
-      if (!form.name) { alert('請填寫教練姓名'); return false }
-      if (!form.gender) { alert('請選擇性別'); return false }
-      if (!form.phone) { alert('請填寫聯絡電話'); return false }
-      return true
+      const nameErr = validateName(form.name, '教練姓名')
+      if (nameErr) errs.name = nameErr
+      const phoneErr = validatePhone(form.phone, true)
+      if (phoneErr) errs.phone = phoneErr
+      if (form.email) { const emailErr = validateEmail(form.email); if (emailErr) errs.email = emailErr }
+      const idErr = validateIdNumber(form.id_number)
+      if (idErr) errs.id_number = idErr
+      const bdErr = validateBirthDate(form.birth_date)
+      if (bdErr) errs.birth_date = bdErr
+      const epErr = validatePhone(form.emergency_phone)
+      if (epErr) errs.emergency_phone = epErr
+      const addrErr = validateAddress(form.address)
+      if (addrErr) errs.address = addrErr
     }
     if (s === 2) {
-      if (!form.hire_date) { alert('請選擇入職日期'); return false }
-      if (!form.employment_type) { alert('請選擇僱用類型'); return false }
-      return true
+      const hdErr = validateRequired(form.hire_date, '入職日期')
+      if (hdErr) errs.hire_date = hdErr
+      const etErr = validateRequired(form.employment_type, '僱用類型')
+      if (etErr) errs.employment_type = etErr
     }
+    if (s === 3) {
+      const baErr = validateBankAccount(form.bank_account)
+      if (baErr) errs.bank_account = baErr
+    }
+    setFormErrors(prev => ({ ...prev, ...errs }))
+    if (Object.keys(errs).length > 0) return false
     return true
   }
 
@@ -304,7 +324,12 @@ export const AdminCoachManagement: React.FC = () => {
       <div className="bg-neutral-50 rounded-xl p-4 space-y-3">
         <p className="font-bold text-sm text-neutral-700">基本資料</p>
         <FormField label="教練姓名 *">
-          <Input placeholder="請輸入姓名" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
+          <Input placeholder="請輸入姓名" value={form.name}
+            className={formErrors.name ? 'border-red-400 ring-1 ring-red-200' : ''}
+            onChange={e => { setForm({ ...form, name: e.target.value }); if (formErrors.name) { const err = validateName(e.target.value, '教練姓名'); setFormErrors(prev => { const n = {...prev}; if (err) n.name = err; else delete n.name; return n; }); } }}
+            onBlur={() => { const err = validateName(form.name, '教練姓名'); setFormErrors(prev => { const n = {...prev}; if (err) n.name = err; else delete n.name; return n; }); }}
+          />
+          {formErrors.name && <p className="text-xs text-red-500 mt-1">{formErrors.name}</p>}
         </FormField>
         <FormField label="性別 *">
           <div className="flex gap-2">
@@ -316,24 +341,45 @@ export const AdminCoachManagement: React.FC = () => {
             ))}
           </div>
         </FormField>
-        <CoachDateWheelPicker label="出生日期" value={form.birth_date} onChange={v => setForm({ ...form, birth_date: v })} yearRange={[1950, 2008]} />
-        {form.birth_date && (
+        <CoachDateWheelPicker label="出生日期" value={form.birth_date} onChange={v => { setForm({ ...form, birth_date: v }); if (formErrors.birth_date) { const err = validateBirthDate(v); setFormErrors(prev => { const n = {...prev}; if (err) n.birth_date = err; else delete n.birth_date; return n; }); } }} yearRange={[1950, 2008]} />
+        {formErrors.birth_date && <p className="text-xs text-red-500 mt-1">{formErrors.birth_date}</p>}
+        {form.birth_date && !formErrors.birth_date && (
           <p className="text-xs text-neutral-500">年齡：{calculateAge(form.birth_date)} 歲</p>
         )}
         <FormField label="身分證字號">
-          <Input placeholder="例如：A123456789" value={form.id_number} onChange={e => setForm({ ...form, id_number: e.target.value })} />
+          <Input placeholder="例如：A123456789" value={form.id_number}
+            className={formErrors.id_number ? 'border-red-400 ring-1 ring-red-200' : ''}
+            onChange={e => { setForm({ ...form, id_number: e.target.value }); if (formErrors.id_number) { const err = validateIdNumber(e.target.value); setFormErrors(prev => { const n = {...prev}; if (err) n.id_number = err; else delete n.id_number; return n; }); } }}
+            onBlur={() => { const err = validateIdNumber(form.id_number); setFormErrors(prev => { const n = {...prev}; if (err) n.id_number = err; else delete n.id_number; return n; }); }}
+          />
+          {formErrors.id_number && <p className="text-xs text-red-500 mt-1">{formErrors.id_number}</p>}
         </FormField>
       </div>
       <div className="bg-neutral-50 rounded-xl p-4 space-y-3">
         <p className="font-bold text-sm text-neutral-700">聯絡方式</p>
         <FormField label="聯絡電話 *">
-          <Input type="tel" placeholder="例如：0912345678" value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} />
+          <Input type="tel" placeholder="例如：0912345678" value={form.phone}
+            className={formErrors.phone ? 'border-red-400 ring-1 ring-red-200' : ''}
+            onChange={e => { setForm({ ...form, phone: e.target.value }); if (formErrors.phone) { const err = validatePhone(e.target.value, true); setFormErrors(prev => { const n = {...prev}; if (err) n.phone = err; else delete n.phone; return n; }); } }}
+            onBlur={() => { const err = validatePhone(form.phone, true); setFormErrors(prev => { const n = {...prev}; if (err) n.phone = err; else delete n.phone; return n; }); }}
+          />
+          {formErrors.phone && <p className="text-xs text-red-500 mt-1">{formErrors.phone}</p>}
         </FormField>
         <FormField label="電子郵件">
-          <Input type="email" placeholder="例如：coach@example.com" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} />
+          <Input type="email" placeholder="例如：coach@example.com" value={form.email}
+            className={formErrors.email ? 'border-red-400 ring-1 ring-red-200' : ''}
+            onChange={e => { setForm({ ...form, email: e.target.value }); if (formErrors.email) { const err = form.email || e.target.value ? validateEmail(e.target.value) : ''; setFormErrors(prev => { const n = {...prev}; if (err) n.email = err; else delete n.email; return n; }); } }}
+            onBlur={() => { if (form.email) { const err = validateEmail(form.email); setFormErrors(prev => { const n = {...prev}; if (err) n.email = err; else delete n.email; return n; }); } }}
+          />
+          {formErrors.email && <p className="text-xs text-red-500 mt-1">{formErrors.email}</p>}
         </FormField>
         <FormField label="通訊地址">
-          <Input placeholder="請輸入地址" value={form.address} onChange={e => setForm({ ...form, address: e.target.value })} />
+          <Input placeholder="請輸入地址" value={form.address}
+            className={formErrors.address ? 'border-red-400 ring-1 ring-red-200' : ''}
+            onChange={e => { setForm({ ...form, address: e.target.value }); if (formErrors.address) { const err = validateAddress(e.target.value); setFormErrors(prev => { const n = {...prev}; if (err) n.address = err; else delete n.address; return n; }); } }}
+            onBlur={() => { const err = validateAddress(form.address); setFormErrors(prev => { const n = {...prev}; if (err) n.address = err; else delete n.address; return n; }); }}
+          />
+          {formErrors.address && <p className="text-xs text-red-500 mt-1">{formErrors.address}</p>}
         </FormField>
       </div>
       <div className="bg-neutral-50 rounded-xl p-4 space-y-3">
@@ -342,7 +388,12 @@ export const AdminCoachManagement: React.FC = () => {
           <Input placeholder="緊急聯絡人姓名" value={form.emergency_contact} onChange={e => setForm({ ...form, emergency_contact: e.target.value })} />
         </FormField>
         <FormField label="電話">
-          <Input type="tel" placeholder="緊急聯絡人電話" value={form.emergency_phone} onChange={e => setForm({ ...form, emergency_phone: e.target.value })} />
+          <Input type="tel" placeholder="緊急聯絡人電話" value={form.emergency_phone}
+            className={formErrors.emergency_phone ? 'border-red-400 ring-1 ring-red-200' : ''}
+            onChange={e => { setForm({ ...form, emergency_phone: e.target.value }); if (formErrors.emergency_phone) { const err = validatePhone(e.target.value); setFormErrors(prev => { const n = {...prev}; if (err) n.emergency_phone = err; else delete n.emergency_phone; return n; }); } }}
+            onBlur={() => { const err = validatePhone(form.emergency_phone); setFormErrors(prev => { const n = {...prev}; if (err) n.emergency_phone = err; else delete n.emergency_phone; return n; }); }}
+          />
+          {formErrors.emergency_phone && <p className="text-xs text-red-500 mt-1">{formErrors.emergency_phone}</p>}
         </FormField>
       </div>
     </div>
@@ -389,7 +440,12 @@ export const AdminCoachManagement: React.FC = () => {
           <Input placeholder="例如：忠孝分行" value={form.bank_branch} onChange={e => setForm({ ...form, bank_branch: e.target.value })} />
         </FormField>
         <FormField label="匯款帳號">
-          <Input placeholder="請輸入帳號" value={form.bank_account} onChange={e => setForm({ ...form, bank_account: e.target.value })} />
+          <Input placeholder="請輸入帳號" value={form.bank_account}
+            className={formErrors.bank_account ? 'border-red-400 ring-1 ring-red-200' : ''}
+            onChange={e => { setForm({ ...form, bank_account: e.target.value }); if (formErrors.bank_account) { const err = validateBankAccount(e.target.value); setFormErrors(prev => { const n = {...prev}; if (err) n.bank_account = err; else delete n.bank_account; return n; }); } }}
+            onBlur={() => { const err = validateBankAccount(form.bank_account); setFormErrors(prev => { const n = {...prev}; if (err) n.bank_account = err; else delete n.bank_account; return n; }); }}
+          />
+          {formErrors.bank_account && <p className="text-xs text-red-500 mt-1">{formErrors.bank_account}</p>}
         </FormField>
         <FormField label="戶名">
           <Input placeholder="請輸入戶名" value={form.account_holder} onChange={e => setForm({ ...form, account_holder: e.target.value })} />
