@@ -514,6 +514,7 @@ export default function App() {
 
     // Step 1: Email + 密碼
     setIsSendingCode(true);
+    try {
     const { data, error } = await supabase.auth.signInWithPassword({
       email: loginData.account,
       password: loginData.password,
@@ -525,13 +526,18 @@ export default function App() {
       return;
     }
 
+    console.log('登入成功', data.user.email);
+
     // 檢查是否為管理員
+    console.log('開始查 user_roles');
     const { data: roleData } = await supabase
       .from('user_roles')
       .select('role, requires_otp')
       .eq('user_id', data.user.id)
       .in('role', ['super_admin', 'admin'])
       .maybeSingle();
+
+    console.log('user_roles 結果:', roleData);
 
     if (roleData) {
       if (roleData.requires_otp === false) {
@@ -557,6 +563,7 @@ export default function App() {
     }
 
     // 不是管理員 → 普通學員登入
+    console.log('學員登入流程');
     setUserRole('student');
     setUserEmail(loginData.account);
 
@@ -571,6 +578,11 @@ export default function App() {
     setIsLoginOpen(false);
     setLoginData({ account: '', password: '' });
     setIsSendingCode(false);
+    } catch (err) {
+      console.error('登入錯誤:', err);
+      alert('登入過程發生錯誤');
+      setIsSendingCode(false);
+    }
   };
 
   const addStudent = () => {
