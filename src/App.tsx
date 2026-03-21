@@ -351,18 +351,26 @@ export default function App() {
       } else if (session) {
         setUserEmail(session.user.email || '');
 
-        // 檢查是否為管理員且已驗證 OTP
-        const { data: roleData } = await supabase
-          .from('user_roles')
-          .select('role, otp_verified')
-          .eq('user_id', session.user.id)
-          .in('role', ['super_admin', 'admin'])
-          .maybeSingle();
+        try {
+          // 檢查是否為管理員且已驗證 OTP
+          const { data: roleData, error: roleError } = await supabase
+            .from('user_roles')
+            .select('role, otp_verified')
+            .eq('user_id', session.user.id)
+            .in('role', ['super_admin', 'admin'])
+            .maybeSingle();
 
-        if (roleData && roleData.otp_verified === true) {
-          setUserRole('admin');
-          setIsAdminLoggedIn(true);
-          setActiveTab(prev => prev.startsWith('admin-') ? prev : 'admin-dashboard');
+          if (roleError) {
+            console.error('onAuthStateChange user_roles 查詢失敗:', roleError);
+          }
+
+          if (roleData && roleData.otp_verified === true) {
+            setUserRole('admin');
+            setIsAdminLoggedIn(true);
+            setActiveTab(prev => prev.startsWith('admin-') ? prev : 'admin-dashboard');
+          }
+        } catch (err) {
+          console.error('onAuthStateChange 錯誤:', err);
         }
       }
     });
@@ -515,69 +523,76 @@ export default function App() {
     // Step 1: Email + 密碼
     setIsSendingCode(true);
     try {
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email: loginData.account,
-      password: loginData.password,
-    });
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: loginData.account,
+        password: loginData.password,
+      });
 
-    if (error) {
-      alert('帳號或密碼錯誤');
-      setIsSendingCode(false);
-      return;
-    }
-
-    console.log('登入成功', data.user.email);
-
-    // 檢查是否為管理員
-    console.log('開始查 user_roles');
-    const { data: roleData } = await supabase
-      .from('user_roles')
-      .select('role, requires_otp')
-      .eq('user_id', data.user.id)
-      .in('role', ['super_admin', 'admin'])
-      .maybeSingle();
-
-    console.log('user_roles 結果:', roleData);
-
-    if (roleData) {
-      if (roleData.requires_otp === false) {
-        // 不需要 OTP → 直接進入管理員
-        sessionStorage.setItem('admin_verified', loginData.account);
-        setUserRole('admin');
-        setIsAdminLoggedIn(true);
-        setActiveTab('admin-dashboard');
-        setUserEmail(loginData.account);
-        setIsLoginOpen(false);
-        setLoginData({ account: '', password: '' });
+      if (error || !data.user) {
+        console.error('signInWithPassword 失敗:', error);
+        alert('帳號或密碼錯誤');
         setIsSendingCode(false);
         return;
       }
-      // 需要 OTP → 發送 OTP 進入第二步
-      await generateAndSendOtp(data.user.id, loginData.account);
-      setPendingAdminUserId(data.user.id);
-      setPendingAdminEmail(loginData.account);
-      startOtpCooldown();
-      setLoginStep(2);
+
+      console.log('登入成功', data.user.email);
+
+      // 檢查是否為管理員
+      console.log('開始查 user_roles');
+      const { data: roleData, error: roleError } = await supabase
+        .from('user_roles')
+        .select('role, requires_otp')
+        .eq('user_id', data.user.id)
+        .in('role', ['super_admin', 'admin'])
+        .maybeSingle();
+
+      if (roleError) {
+        console.error('user_roles 查詢失敗:', roleError);
+      }
+      console.log('user_roles 結果:', roleData);
+
+      if (roleData) {
+        if (roleData.requires_otp === false) {
+          // 不需要 OTP → 直接進入管理員
+          sessionStorage.setItem('admin_verified', loginData.account);
+          setUserRole('admin');
+          setIsAdminLoggedIn(true);
+          setActiveTab('admin-dashboard');
+          setUserEmail(loginData.account);
+          setIsLoginOpen(false);
+          setLoginData({ account: '', password: '' });
+          setIsSendingCode(false);
+          return;
+        }
+        // 需要 OTP → 發送 OTP 進入第二步
+        await generateAndSendOtp(data.user.id, loginData.account);
+        setPendingAdminUserId(data.user.id);
+        setPendingAdminEmail(loginData.account);
+        startOtpCooldown();
+        setLoginStep(2);
+        setIsSendingCode(false);
+        return;
+      }
+
+      // 不是管理員 → 普通學員登入
+      console.log('學員登入流程');
+      setUserRole('student');
+      setUserEmail(loginData.account);
+
+      const { data: myStudents, error: studentsError } = await supabase
+        .from('students')
+        .select('category')
+        .eq('parent_uid', data.user.id);
+      if (studentsError) {
+        console.error('students 查詢失敗:', studentsError);
+      }
+      if (myStudents && myStudents.length > 0) {
+        setUserCategory(myStudents.some(s => s.category === 'adult') ? 'adult' : 'child');
+      }
+
+      setIsLoginOpen(false);
+      setLoginData({ account: '', password: '' });
       setIsSendingCode(false);
-      return;
-    }
-
-    // 不是管理員 → 普通學員登入
-    console.log('學員登入流程');
-    setUserRole('student');
-    setUserEmail(loginData.account);
-
-    const { data: myStudents } = await supabase
-      .from('students')
-      .select('category')
-      .eq('parent_uid', data.user?.id);
-    if (myStudents && myStudents.length > 0) {
-      setUserCategory(myStudents.some(s => s.category === 'adult') ? 'adult' : 'child');
-    }
-
-    setIsLoginOpen(false);
-    setLoginData({ account: '', password: '' });
-    setIsSendingCode(false);
     } catch (err) {
       console.error('登入錯誤:', err);
       alert('登入過程發生錯誤');
