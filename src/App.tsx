@@ -36,7 +36,6 @@ const WheelColumn: React.FC<{
   const containerRef = useRef<HTMLDivElement>(null)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const isUserScroll = useRef(true)
-  const isLoginInProgress = useRef(false)
 
   const scrollToValue = useCallback((val: string, smooth = false) => {
     const idx = items.findIndex(i => i.value === val)
@@ -157,6 +156,7 @@ const RegisterDateWheelPicker: React.FC<{
 }
 
 export default function App() {
+  const isLoginInProgress = useRef(false);
   const [activeTab, setActiveTab] = useState('home');
   const [courses, setCourses] = useState<Course[]>([]);
   const [contracts, setContracts] = useState<VenueContract[]>([]);
