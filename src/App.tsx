@@ -36,6 +36,7 @@ const WheelColumn: React.FC<{
   const containerRef = useRef<HTMLDivElement>(null)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const isUserScroll = useRef(true)
+  const isLoginInProgress = useRef(false)
 
   const scrollToValue = useCallback((val: string, smooth = false) => {
     const idx = items.findIndex(i => i.value === val)
@@ -293,52 +294,56 @@ export default function App() {
 
   useEffect(() => {
     const checkSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session) {
-        const email = session.user.email || '';
-        setUserEmail(email);
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session) {
+          const email = session.user.email || '';
+          setUserEmail(email);
 
-        // 檢查是否為管理員且已驗證 OTP
-        const { data: roleData } = await supabase
-          .from('user_roles')
-          .select('role, otp_verified')
-          .eq('user_id', session.user.id)
-          .in('role', ['super_admin', 'admin'])
-          .maybeSingle();
+          // 檢查是否為管理員且已驗證 OTP
+          const { data: roleData } = await supabase
+            .from('user_roles')
+            .select('role, otp_verified')
+            .eq('user_id', session.user.id)
+            .in('role', ['super_admin', 'admin'])
+            .maybeSingle();
 
-        if (roleData && roleData.otp_verified === true) {
-          setUserRole('admin');
-          setIsAdminLoggedIn(true);
-          setActiveTab(prev => prev.startsWith('admin-') ? prev : 'admin-dashboard');
-        } else {
-          setUserRole('student');
-          // 查詢用戶類型
-          const { data: myStudents } = await supabase
-            .from('students')
-            .select('category')
-            .eq('parent_uid', session.user.id);
-          if (myStudents && myStudents.length > 0) {
-            setUserCategory(myStudents.some(s => s.category === 'adult') ? 'adult' : 'child');
-          }
-        }
-      } else {
-        // 檢查 LINE 登入狀態
-        const savedLineUser = sessionStorage.getItem('line_user');
-        if (savedLineUser) {
-          const profile = JSON.parse(savedLineUser);
-          const { data: linkedStudents } = await supabase
-            .from('students')
-            .select('parent_uid, category')
-            .eq('line_uid', profile.userId);
-          if (linkedStudents && linkedStudents.length > 0) {
-            setUserRole('student');
-            setUserEmail(profile.displayName + ' (LINE)');
-            setLineProfile(profile);
-            setUserCategory(linkedStudents.some((s: any) => s.category === 'adult') ? 'adult' : 'child');
+          if (roleData && roleData.otp_verified === true) {
+            setUserRole('admin');
+            setIsAdminLoggedIn(true);
+            setActiveTab(prev => prev.startsWith('admin-') ? prev : 'admin-dashboard');
           } else {
-            sessionStorage.removeItem('line_user');
+            setUserRole('student');
+            // 查詢用戶類型
+            const { data: myStudents } = await supabase
+              .from('students')
+              .select('category')
+              .eq('parent_uid', session.user.id);
+            if (myStudents && myStudents.length > 0) {
+              setUserCategory(myStudents.some(s => s.category === 'adult') ? 'adult' : 'child');
+            }
+          }
+        } else {
+          // 檢查 LINE 登入狀態
+          const savedLineUser = sessionStorage.getItem('line_user');
+          if (savedLineUser) {
+            const profile = JSON.parse(savedLineUser);
+            const { data: linkedStudents } = await supabase
+              .from('students')
+              .select('parent_uid, category')
+              .eq('line_uid', profile.userId);
+            if (linkedStudents && linkedStudents.length > 0) {
+              setUserRole('student');
+              setUserEmail(profile.displayName + ' (LINE)');
+              setLineProfile(profile);
+              setUserCategory(linkedStudents.some((s: any) => s.category === 'adult') ? 'adult' : 'child');
+            } else {
+              sessionStorage.removeItem('line_user');
+            }
           }
         }
+      } catch (err) {
+        console.warn('checkSession 錯誤:', err);
       }
     };
     checkSession();
@@ -348,21 +353,23 @@ export default function App() {
         setUserRole('user');
         setIsAdminLoggedIn(false);
         setUserEmail('');
-      } else if (session) {
+        return;
+      }
+
+      // 登入中由 handleLogin 自己處理角色判斷，避免 lock 衝突
+      if (isLoginInProgress.current) return;
+
+      if (session) {
         setUserEmail(session.user.email || '');
 
         try {
           // 檢查是否為管理員且已驗證 OTP
-          const { data: roleData, error: roleError } = await supabase
+          const { data: roleData } = await supabase
             .from('user_roles')
             .select('role, otp_verified')
             .eq('user_id', session.user.id)
             .in('role', ['super_admin', 'admin'])
             .maybeSingle();
-
-          if (roleError) {
-            console.error('onAuthStateChange user_roles 查詢失敗:', roleError);
-          }
 
           if (roleData && roleData.otp_verified === true) {
             setUserRole('admin');
@@ -370,7 +377,7 @@ export default function App() {
             setActiveTab(prev => prev.startsWith('admin-') ? prev : 'admin-dashboard');
           }
         } catch (err) {
-          console.error('onAuthStateChange 錯誤:', err);
+          console.warn('onAuthStateChange user_roles 查詢失敗:', err);
         }
       }
     });
@@ -522,6 +529,7 @@ export default function App() {
 
     // Step 1: Email + 密碼
     setIsSendingCode(true);
+    isLoginInProgress.current = true;
     try {
       const { data, error } = await supabase.auth.signInWithPassword({
         email: loginData.account,
@@ -532,6 +540,7 @@ export default function App() {
         console.error('signInWithPassword 失敗:', error);
         alert('帳號或密碼錯誤');
         setIsSendingCode(false);
+        isLoginInProgress.current = false;
         return;
       }
 
@@ -562,6 +571,7 @@ export default function App() {
           setIsLoginOpen(false);
           setLoginData({ account: '', password: '' });
           setIsSendingCode(false);
+          isLoginInProgress.current = false;
           return;
         }
         // 需要 OTP → 發送 OTP 進入第二步
@@ -571,6 +581,7 @@ export default function App() {
         startOtpCooldown();
         setLoginStep(2);
         setIsSendingCode(false);
+        isLoginInProgress.current = false;
         return;
       }
 
@@ -593,10 +604,12 @@ export default function App() {
       setIsLoginOpen(false);
       setLoginData({ account: '', password: '' });
       setIsSendingCode(false);
+      isLoginInProgress.current = false;
     } catch (err) {
       console.error('登入錯誤:', err);
       alert('登入過程發生錯誤');
       setIsSendingCode(false);
+      isLoginInProgress.current = false;
     }
   };
 
