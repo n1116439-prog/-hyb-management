@@ -1161,9 +1161,12 @@ export default function App() {
                   onClick={async () => {
                     if (!forgotEmail.trim()) { alert('請輸入 Email'); return; }
                     setForgotSending(true);
-                    const { error } = await supabase.auth.resetPasswordForEmail(forgotEmail, {
-                      redirectTo: window.location.origin + '/reset-password',
+                    const redirectUrl = window.location.origin + '/reset-password';
+                    console.log('忘記密碼 - 發送重設連結到:', forgotEmail, '導向:', redirectUrl);
+                    const { data: resetData, error } = await supabase.auth.resetPasswordForEmail(forgotEmail, {
+                      redirectTo: redirectUrl,
                     });
+                    console.log('resetPasswordForEmail 結果:', { resetData, error });
                     setForgotSending(false);
                     if (error) { alert('發送失敗：' + error.message); return; }
                     setForgotSent(true);
