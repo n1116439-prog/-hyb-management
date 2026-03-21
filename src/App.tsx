@@ -15,7 +15,7 @@ import { AdminSettings } from './components/AdminSettings';
 import { AdminCoachPayroll } from './components/AdminCoachPayroll';
 import { AdminAttendance } from './components/AdminAttendance';
 import { ProfilePage } from './components/ProfilePage';
-import { LogIn, ShieldCheck, User } from 'lucide-react';
+import { LogIn, ShieldCheck, User, Lock, Mail } from 'lucide-react';
 import { Button, FormField, Input } from './components/UI';
 import { BottomSheet } from './components/BottomSheet';
 
@@ -200,6 +200,18 @@ export default function App() {
   const [userEmail, setUserEmail] = useState<string>('');
   const [userCategory, setUserCategory] = useState<'child' | 'adult' | ''>('');
 
+  // 忘記密碼
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotSending, setForgotSending] = useState(false);
+  const [forgotSent, setForgotSent] = useState(false);
+  const [forgotCooldown, setForgotCooldown] = useState(0);
+
+  // 重設密碼
+  const [showResetPassword, setShowResetPassword] = useState(false);
+  const [resetForm, setResetForm] = useState({ password: '', confirm: '' });
+  const [resetSaving, setResetSaving] = useState(false);
+
   // LINE Login
   const [lineProfile, setLineProfile] = useState<{ userId: string; displayName: string; pictureUrl?: string } | null>(null);
   const [showLineBindModal, setShowLineBindModal] = useState(false);
@@ -270,6 +282,13 @@ export default function App() {
     };
 
     handleLineCallback();
+  }, []);
+
+  // 偵測重設密碼 URL
+  useEffect(() => {
+    if (window.location.pathname === '/reset-password') {
+      setShowResetPassword(true);
+    }
   }, []);
 
   useEffect(() => {
@@ -945,9 +964,73 @@ export default function App() {
     }
   };
 
+  // 重設密碼全屏頁面
+  if (showResetPassword) {
+    return (
+      <div className="bg-gradient-to-b from-slate-50 to-white min-h-screen flex items-center justify-center px-4">
+        <div className="bg-white rounded-2xl shadow-lg max-w-md w-full p-8">
+          <div className="flex flex-col items-center gap-4 mb-6">
+            <div className="w-16 h-16 rounded-2xl flex items-center justify-center bg-primary/10 text-primary">
+              <Lock size={32} />
+            </div>
+            <p className="text-lg font-bold text-neutral-900">設定新密碼</p>
+          </div>
+          <div className="space-y-4">
+            <FormField label="新密碼（至少 6 位）">
+              <Input
+                type="password"
+                placeholder="請輸入新密碼"
+                value={resetForm.password}
+                onChange={e => setResetForm(prev => ({ ...prev, password: e.target.value }))}
+              />
+            </FormField>
+            <FormField label="確認新密碼">
+              <Input
+                type="password"
+                placeholder="再次輸入新密碼"
+                value={resetForm.confirm}
+                onChange={e => setResetForm(prev => ({ ...prev, confirm: e.target.value }))}
+              />
+            </FormField>
+            <Button
+              variant="primary"
+              loading={resetSaving}
+              onClick={async () => {
+                if (resetForm.password.length < 6) { alert('密碼至少需要 6 個字元'); return; }
+                if (resetForm.password !== resetForm.confirm) { alert('兩次密碼輸入不一致'); return; }
+                setResetSaving(true);
+                const { error } = await supabase.auth.updateUser({ password: resetForm.password });
+                setResetSaving(false);
+                if (error) { alert('更新失敗：' + error.message); return; }
+                alert('密碼已更新，請用新密碼登入');
+                setShowResetPassword(false);
+                setResetForm({ password: '', confirm: '' });
+                window.history.replaceState({}, '', '/');
+                setIsLoginOpen(true);
+              }}
+            >
+              確認更新
+            </Button>
+            <Button
+              variant="ghost"
+              className="text-neutral-500"
+              onClick={() => {
+                setShowResetPassword(false);
+                setResetForm({ password: '', confirm: '' });
+                window.history.replaceState({}, '', '/');
+              }}
+            >
+              返回首頁
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <>
-      <Layout 
+      <Layout
         activeTab={activeTab} 
         onTabChange={(tab) => {
           setActiveTab(tab);
@@ -969,141 +1052,232 @@ export default function App() {
           setOtpCode(['', '', '', '', '', '']);
           setPendingAdminEmail('');
           setPendingAdminUserId('');
+          setShowForgotPassword(false);
+          setForgotEmail('');
+          setForgotSent(false);
         }}
-        title={loginStep === 1 ? '登入' : '安全驗證'}
+        title={showForgotPassword ? '忘記密碼' : loginStep === 1 ? '登入' : '安全驗證'}
       >
-        <div className="space-y-6">
-          <div className="flex flex-col items-center gap-4 py-4">
-            <div className={`w-16 h-16 rounded-2xl flex items-center justify-center ${loginStep === 2 ? 'bg-danger/10 text-danger' : 'bg-primary/10 text-primary'}`}>
-              <ShieldCheck size={32} />
+        {showForgotPassword ? (
+          /* === 忘記密碼畫面 === */
+          <div className="space-y-6">
+            <div className="flex flex-col items-center gap-4 py-4">
+              <div className={`w-16 h-16 rounded-2xl flex items-center justify-center ${forgotSent ? 'bg-green-100 text-green-600' : 'bg-primary/10 text-primary'}`}>
+                {forgotSent ? <Mail size={32} /> : <Lock size={32} />}
+              </div>
+              <div className="text-center">
+                <p className="text-lg font-bold text-neutral-900">
+                  {forgotSent ? '已發送重設連結' : '忘記密碼'}
+                </p>
+                <p className="text-sm text-neutral-600">
+                  {forgotSent
+                    ? `請到 ${forgotEmail} 信箱查看郵件，點擊連結重設密碼`
+                    : '輸入你的 Email，我們會寄送重設密碼連結'}
+                </p>
+              </div>
             </div>
-            <div className="text-center">
-              <p className="text-lg font-bold text-neutral-900">
-                {loginStep === 1 ? '歡迎回來' : '安全驗證'}
-              </p>
-              <p className="text-sm text-neutral-600">
-                {loginStep === 1
-                  ? '請輸入 Email 與密碼，系統自動判斷角色'
-                  : `驗證碼已發送至 ${pendingAdminEmail}`}
-              </p>
-              {loginStep === 2 && (
-                <p className="text-xs text-amber-600 mt-1">開發模式：請查看瀏覽器 Console</p>
-              )}
-            </div>
-          </div>
 
-          <div className="space-y-4">
-            {loginStep === 1 ? (
-              <>
+            {forgotSent ? (
+              <div className="space-y-4">
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
+                  <p className="text-amber-800 text-sm text-center">沒收到？請檢查垃圾郵件，或等冷卻結束後重新發送</p>
+                </div>
+                <Button
+                  variant="primary"
+                  loading={forgotSending}
+                  disabled={forgotCooldown > 0}
+                  onClick={async () => {
+                    setForgotSending(true);
+                    const { error } = await supabase.auth.resetPasswordForEmail(forgotEmail, {
+                      redirectTo: window.location.origin + '/reset-password',
+                    });
+                    setForgotSending(false);
+                    if (error) { alert('發送失敗：' + error.message); return; }
+                    setForgotCooldown(60);
+                    const timer = setInterval(() => {
+                      setForgotCooldown(prev => { if (prev <= 1) { clearInterval(timer); return 0; } return prev - 1; });
+                    }, 1000);
+                  }}
+                >
+                  {forgotCooldown > 0 ? `重新發送 (${forgotCooldown}s)` : '重新發送'}
+                </Button>
+                <Button variant="ghost" onClick={() => { setShowForgotPassword(false); setForgotEmail(''); setForgotSent(false); }} className="text-neutral-500">
+                  返回登入
+                </Button>
+              </div>
+            ) : (
+              <div className="space-y-4">
                 <FormField label="Email">
                   <Input
-                    placeholder="請輸入 Email"
-                    value={loginData.account}
-                    onChange={e => setLoginData({...loginData, account: e.target.value})}
+                    type="email"
+                    placeholder="請輸入註冊時的 Email"
+                    value={forgotEmail}
+                    onChange={e => setForgotEmail(e.target.value)}
                   />
                 </FormField>
-                <FormField label="密碼">
-                  <Input
-                    type="password"
-                    placeholder="請輸入密碼"
-                    value={loginData.password}
-                    onChange={e => setLoginData({...loginData, password: e.target.value})}
-                  />
-                </FormField>
-              </>
-            ) : (
-              <div>
-                <p className="text-xs font-medium text-neutral-500 mb-2">6 位數驗證碼</p>
-                <div className="flex gap-2 justify-center">
-                  {otpCode.map((digit, i) => (
-                    <input
-                      key={i}
-                      id={`otp-${i}`}
-                      type="text"
-                      inputMode="numeric"
-                      maxLength={1}
-                      value={digit}
-                      className="w-12 h-14 text-center text-xl font-bold border-2 border-neutral-200 rounded-xl focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all"
-                      onChange={e => {
-                        const val = e.target.value.replace(/\D/g, '');
-                        const newCode = [...otpCode];
-                        newCode[i] = val;
-                        setOtpCode(newCode);
-                        if (val && i < 5) document.getElementById(`otp-${i + 1}`)?.focus();
-                      }}
-                      onKeyDown={e => {
-                        if (e.key === 'Backspace' && !otpCode[i] && i > 0) {
-                          document.getElementById(`otp-${i - 1}`)?.focus();
-                        }
-                      }}
-                    />
-                  ))}
-                </div>
+                <Button
+                  variant="primary"
+                  loading={forgotSending}
+                  onClick={async () => {
+                    if (!forgotEmail.trim()) { alert('請輸入 Email'); return; }
+                    setForgotSending(true);
+                    const { error } = await supabase.auth.resetPasswordForEmail(forgotEmail, {
+                      redirectTo: window.location.origin + '/reset-password',
+                    });
+                    setForgotSending(false);
+                    if (error) { alert('發送失敗：' + error.message); return; }
+                    setForgotSent(true);
+                    setForgotCooldown(60);
+                    const timer = setInterval(() => {
+                      setForgotCooldown(prev => { if (prev <= 1) { clearInterval(timer); return 0; } return prev - 1; });
+                    }, 1000);
+                  }}
+                >
+                  發送重設連結
+                </Button>
+                <Button variant="ghost" onClick={() => { setShowForgotPassword(false); setForgotEmail(''); }} className="text-neutral-500">
+                  返回登入
+                </Button>
               </div>
             )}
           </div>
+        ) : (
+          /* === 登入畫面 === */
+          <div className="space-y-6">
+            <div className="flex flex-col items-center gap-4 py-4">
+              <div className={`w-16 h-16 rounded-2xl flex items-center justify-center ${loginStep === 2 ? 'bg-danger/10 text-danger' : 'bg-primary/10 text-primary'}`}>
+                <ShieldCheck size={32} />
+              </div>
+              <div className="text-center">
+                <p className="text-lg font-bold text-neutral-900">
+                  {loginStep === 1 ? '歡迎回來' : '安全驗證'}
+                </p>
+                <p className="text-sm text-neutral-600">
+                  {loginStep === 1
+                    ? '請輸入 Email 與密碼，系統自動判斷角色'
+                    : `驗證碼已發送至 ${pendingAdminEmail}`}
+                </p>
+                {loginStep === 2 && (
+                  <p className="text-xs text-amber-600 mt-1">開發模式：請查看瀏覽器 Console</p>
+                )}
+              </div>
+            </div>
 
-          <div className="flex flex-col gap-3">
-            <Button
-              onClick={handleLogin}
-              icon={LogIn}
-              loading={isSendingCode}
-              variant="primary"
-              className={loginStep === 2 ? 'bg-danger hover:bg-danger/90' : ''}
-            >
-              {loginStep === 1 ? '確認登入' : '驗證並登入'}
-            </Button>
+            <div className="space-y-4">
+              {loginStep === 1 ? (
+                <>
+                  <FormField label="Email">
+                    <Input
+                      placeholder="請輸入 Email"
+                      value={loginData.account}
+                      onChange={e => setLoginData({...loginData, account: e.target.value})}
+                    />
+                  </FormField>
+                  <FormField label="密碼">
+                    <Input
+                      type="password"
+                      placeholder="請輸入密碼"
+                      value={loginData.password}
+                      onChange={e => setLoginData({...loginData, password: e.target.value})}
+                    />
+                  </FormField>
+                </>
+              ) : (
+                <div>
+                  <p className="text-xs font-medium text-neutral-500 mb-2">6 位數驗證碼</p>
+                  <div className="flex gap-2 justify-center">
+                    {otpCode.map((digit, i) => (
+                      <input
+                        key={i}
+                        id={`otp-${i}`}
+                        type="text"
+                        inputMode="numeric"
+                        maxLength={1}
+                        value={digit}
+                        className="w-12 h-14 text-center text-xl font-bold border-2 border-neutral-200 rounded-xl focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all"
+                        onChange={e => {
+                          const val = e.target.value.replace(/\D/g, '');
+                          const newCode = [...otpCode];
+                          newCode[i] = val;
+                          setOtpCode(newCode);
+                          if (val && i < 5) document.getElementById(`otp-${i + 1}`)?.focus();
+                        }}
+                        onKeyDown={e => {
+                          if (e.key === 'Backspace' && !otpCode[i] && i > 0) {
+                            document.getElementById(`otp-${i - 1}`)?.focus();
+                          }
+                        }}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
 
-            {loginStep === 2 && (
-              <>
-                <div className="flex items-center justify-center gap-4">
-                  <button
-                    onClick={async () => {
-                      if (otpCooldown > 0) return;
-                      await generateAndSendOtp(pendingAdminUserId, pendingAdminEmail);
-                      startOtpCooldown();
-                    }}
-                    disabled={otpCooldown > 0}
-                    className={`text-sm font-medium ${otpCooldown > 0 ? 'text-neutral-400' : 'text-primary hover:text-primary/80'}`}
+            <div className="flex flex-col gap-3">
+              <Button
+                onClick={handleLogin}
+                icon={LogIn}
+                loading={isSendingCode}
+                variant="primary"
+                className={loginStep === 2 ? 'bg-danger hover:bg-danger/90' : ''}
+              >
+                {loginStep === 1 ? '確認登入' : '驗證並登入'}
+              </Button>
+
+              {loginStep === 2 && (
+                <>
+                  <div className="flex items-center justify-center gap-4">
+                    <button
+                      onClick={async () => {
+                        if (otpCooldown > 0) return;
+                        await generateAndSendOtp(pendingAdminUserId, pendingAdminEmail);
+                        startOtpCooldown();
+                      }}
+                      disabled={otpCooldown > 0}
+                      className={`text-sm font-medium ${otpCooldown > 0 ? 'text-neutral-400' : 'text-primary hover:text-primary/80'}`}
+                    >
+                      {otpCooldown > 0 ? `重新發送 (${otpCooldown}s)` : '重新發送驗證碼'}
+                    </button>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    onClick={() => { setLoginStep(1); setOtpCode(['', '', '', '', '', '']); setPendingAdminEmail(''); setPendingAdminUserId(''); }}
+                    className="text-neutral-500"
                   >
-                    {otpCooldown > 0 ? `重新發送 (${otpCooldown}s)` : '重新發送驗證碼'}
+                    返回上一步
+                  </Button>
+                </>
+              )}
+
+              {loginStep === 1 && (
+                <>
+                  <div className="flex items-center gap-3 my-2">
+                    <div className="flex-1 h-px bg-neutral-200" />
+                    <span className="text-xs text-neutral-400">或</span>
+                    <div className="flex-1 h-px bg-neutral-200" />
+                  </div>
+                  <button
+                    onClick={() => { setIsLoginOpen(false); window.location.href = getLineLoginUrl(); }}
+                    className="w-full flex items-center justify-center gap-2 py-3 rounded-xl font-semibold text-sm transition-all hover:opacity-90"
+                    style={{ backgroundColor: '#06C755', color: 'white' }}
+                  >
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="white">
+                      <path d="M19.365 9.863c.349 0 .63.285.63.631 0 .345-.281.63-.63.63H17.61v1.125h1.755c.349 0 .63.283.63.63 0 .344-.281.629-.63.629h-2.386c-.345 0-.627-.285-.627-.629V8.108c0-.345.282-.63.627-.63h2.386c.349 0 .63.285.63.63 0 .349-.281.63-.63.63H17.61v1.125h1.755zm-3.855 3.016c0 .27-.174.51-.432.596-.064.021-.133.031-.199.031-.211 0-.391-.09-.51-.25l-2.443-3.317v2.94c0 .344-.279.629-.631.629-.346 0-.626-.285-.626-.629V8.108c0-.27.173-.51.43-.595.06-.023.136-.033.194-.033.195 0 .375.104.495.254l2.462 3.33V8.108c0-.345.282-.63.63-.63.345 0 .63.285.63.63v4.771zm-5.741 0c0 .344-.282.629-.631.629-.345 0-.627-.285-.627-.629V8.108c0-.345.282-.63.627-.63.349 0 .631.285.631.63v4.771zm-2.466.629H4.917c-.345 0-.63-.285-.63-.629V8.108c0-.345.285-.63.63-.63.348 0 .63.285.63.63v4.141h1.756c.348 0 .629.283.629.63 0 .344-.282.629-.629.629M24 10.314C24 4.943 18.615.572 12 .572S0 4.943 0 10.314c0 4.811 4.27 8.842 10.035 9.608.391.082.923.258 1.058.59.12.301.079.766.038 1.08l-.164 1.02c-.045.301-.24 1.186 1.049.645 1.291-.539 6.916-4.078 9.436-6.975C23.176 14.393 24 12.458 24 10.314"/>
+                    </svg>
+                    LINE 登入
                   </button>
-                </div>
-                <Button
-                  variant="ghost"
-                  onClick={() => { setLoginStep(1); setOtpCode(['', '', '', '', '', '']); setPendingAdminEmail(''); setPendingAdminUserId(''); }}
-                  className="text-neutral-500"
-                >
-                  返回上一步
-                </Button>
-              </>
-            )}
+                </>
+              )}
+            </div>
 
-            {loginStep === 1 && (
-              <>
-                <div className="flex items-center gap-3 my-2">
-                  <div className="flex-1 h-px bg-neutral-200" />
-                  <span className="text-xs text-neutral-400">或</span>
-                  <div className="flex-1 h-px bg-neutral-200" />
-                </div>
-                <button
-                  onClick={() => { setIsLoginOpen(false); window.location.href = getLineLoginUrl(); }}
-                  className="w-full flex items-center justify-center gap-2 py-3 rounded-xl font-semibold text-sm transition-all hover:opacity-90"
-                  style={{ backgroundColor: '#06C755', color: 'white' }}
-                >
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="white">
-                    <path d="M19.365 9.863c.349 0 .63.285.63.631 0 .345-.281.63-.63.63H17.61v1.125h1.755c.349 0 .63.283.63.63 0 .344-.281.629-.63.629h-2.386c-.345 0-.627-.285-.627-.629V8.108c0-.345.282-.63.627-.63h2.386c.349 0 .63.285.63.63 0 .349-.281.63-.63.63H17.61v1.125h1.755zm-3.855 3.016c0 .27-.174.51-.432.596-.064.021-.133.031-.199.031-.211 0-.391-.09-.51-.25l-2.443-3.317v2.94c0 .344-.279.629-.631.629-.346 0-.626-.285-.626-.629V8.108c0-.27.173-.51.43-.595.06-.023.136-.033.194-.033.195 0 .375.104.495.254l2.462 3.33V8.108c0-.345.282-.63.63-.63.345 0 .63.285.63.63v4.771zm-5.741 0c0 .344-.282.629-.631.629-.345 0-.627-.285-.627-.629V8.108c0-.345.282-.63.627-.63.349 0 .631.285.631.63v4.771zm-2.466.629H4.917c-.345 0-.63-.285-.63-.629V8.108c0-.345.285-.63.63-.63.348 0 .63.285.63.63v4.141h1.756c.348 0 .629.283.629.63 0 .344-.282.629-.629.629M24 10.314C24 4.943 18.615.572 12 .572S0 4.943 0 10.314c0 4.811 4.27 8.842 10.035 9.608.391.082.923.258 1.058.59.12.301.079.766.038 1.08l-.164 1.02c-.045.301-.24 1.186 1.049.645 1.291-.539 6.916-4.078 9.436-6.975C23.176 14.393 24 12.458 24 10.314"/>
-                  </svg>
-                  LINE 登入
-                </button>
-              </>
-            )}
+            <p className="text-center text-xs text-neutral-400">
+              <button onClick={() => setShowForgotPassword(true)} className="text-primary hover:text-primary/80 font-medium">
+                忘記密碼？
+              </button>
+            </p>
           </div>
-
-          <p className="text-center text-xs text-neutral-400">
-            忘記密碼？請聯繫系統管理員
-          </p>
-        </div>
+        )}
       </BottomSheet>
 
       {/* Register Bottom Sheet */}
