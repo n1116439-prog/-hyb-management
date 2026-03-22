@@ -1091,21 +1091,31 @@ export default function App() {
                 setForceChangeSaving(true);
                 try {
                   console.log('開始更新密碼...');
-                  const { error } = await supabase.auth.updateUser({ password: forceChangeForm.password });
+                  // 加 timeout 防止 updateUser 卡住
+                  const updatePromise = supabase.auth.updateUser({ password: forceChangeForm.password });
+                  const timeoutPromise = new Promise<never>((_, reject) => setTimeout(() => reject(new Error('更新密碼超時（10秒）')), 10000));
+                  const { error } = await Promise.race([updatePromise, timeoutPromise]) as any;
                   console.log('updateUser 結果:', error);
                   if (error) { alert('更新失敗：' + error.message); setForceChangeSaving(false); return; }
-                  const { data: { user } } = await supabase.auth.getUser();
-                  console.log('getUser:', user?.id);
-                  if (user) {
-                    await supabase.from('students').update({ force_password_change: false }).eq('parent_uid', user.id);
+
+                  // 取得當前使用者並清除 force_password_change 標記
+                  try {
+                    const { data: { user } } = await supabase.auth.getUser();
+                    console.log('getUser:', user?.id);
+                    if (user) {
+                      await supabase.from('students').update({ force_password_change: false }).eq('parent_uid', user.id);
+                    }
+                  } catch (dbErr) {
+                    console.warn('清除 force_password_change 失敗:', dbErr);
                   }
+
                   setForceChangeSaving(false);
                   setShowForcePasswordChange(false);
                   setForceChangeForm({ password: '', confirm: '' });
                   alert('密碼已更新！');
-                } catch (err) {
+                } catch (err: any) {
                   console.error('強制改密碼錯誤:', err);
-                  alert('更新過程發生錯誤');
+                  alert('更新過程發生錯誤：' + (err?.message || '未知錯誤'));
                   setForceChangeSaving(false);
                 }
               }}
