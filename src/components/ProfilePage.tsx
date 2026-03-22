@@ -38,29 +38,76 @@ export const ProfilePage: React.FC = () => {
   const [newStudentErrors, setNewStudentErrors] = useState<Record<string, string>>({})
   const [passwordErrors, setPasswordErrors] = useState<Record<string, string>>({})
 
+  const getParentUid = async (): Promise<string | null> => {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (user?.id) return user.id
+    // LINE 登入 fallback
+    try {
+      const lineUser = localStorage.getItem('line_user')
+      if (lineUser) {
+        const profile = JSON.parse(lineUser)
+        const { data } = await supabase
+          .from('students')
+          .select('parent_uid')
+          .eq('line_uid', profile.userId)
+          .limit(1)
+          .single()
+        if (data?.parent_uid) return data.parent_uid
+      }
+    } catch (e) {}
+    return null
+  }
+
   const fetchUserInfo = async () => {
     const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
-    const metadata = user.user_metadata || {}
-    setUserInfo({
-      name: metadata.parentName || metadata.name || '',
-      email: user.email || '',
-      phone: metadata.phone || '',
-      userId: user.id,
-    })
-    setProfileForm({
-      name: metadata.parentName || metadata.name || '',
-      phone: metadata.phone || '',
-    })
+    if (user) {
+      const metadata = user.user_metadata || {}
+      setUserInfo({
+        name: metadata.parentName || metadata.name || '',
+        email: user.email || '',
+        phone: metadata.phone || '',
+        userId: user.id,
+      })
+      setProfileForm({
+        name: metadata.parentName || metadata.name || '',
+        phone: metadata.phone || '',
+      })
+      return
+    }
+    // LINE 登入 fallback
+    try {
+      const lineUser = localStorage.getItem('line_user')
+      if (lineUser) {
+        const profile = JSON.parse(lineUser)
+        const { data: student } = await supabase
+          .from('students')
+          .select('parent_uid, name, phone, email')
+          .eq('line_uid', profile.userId)
+          .limit(1)
+          .single()
+        if (student) {
+          setUserInfo({
+            name: profile.displayName || student.name || '',
+            email: student.email || '',
+            phone: student.phone || '',
+            userId: student.parent_uid || '',
+          })
+          setProfileForm({
+            name: profile.displayName || student.name || '',
+            phone: student.phone || '',
+          })
+        }
+      }
+    } catch (e) {}
   }
 
   const fetchStudents = async () => {
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
+    const parentUid = await getParentUid()
+    if (!parentUid) return
     const { data } = await supabase
       .from('students')
       .select('*')
-      .eq('parent_uid', user.id)
+      .eq('parent_uid', parentUid)
       .order('created_at')
     setStudents(data || [])
   }
@@ -165,6 +212,14 @@ export const ProfilePage: React.FC = () => {
     if (bdErr) errs.birthDate = bdErr
     setNewStudentErrors(errs)
     if (Object.keys(errs).length > 0) return
+
+    // 確認 parent_uid 有值
+    const parentUid = userInfo.userId || await getParentUid()
+    if (!parentUid) {
+      alert('請先綁定帳號後再新增學員')
+      return
+    }
+
     setSaving(true)
     const age = calculateAge(newStudent.birthDate)
     const isAdult = age >= 16
@@ -185,7 +240,7 @@ export const ProfilePage: React.FC = () => {
       email: userInfo.email,
       emergency_contact: userInfo.name,
       emergency_phone: userInfo.phone,
-      parent_uid: userInfo.userId,
+      parent_uid: parentUid,
       student_code: studentCode,
       age_type: isAdult ? 'adult' : 'child',
       category: isAdult ? 'adult' : 'child',
