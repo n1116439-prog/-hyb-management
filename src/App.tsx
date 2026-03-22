@@ -407,7 +407,8 @@ export default function App() {
   const fetchCourses = async () => {
     const { data: coursesData } = await supabase
       .from('courses')
-      .select('*, coaches(name), venues(name, address)')
+      .select('*, course_code, is_deleted, status, coaches(name), venues(name, address)')
+      .eq('is_deleted', false)
       .order('name')
 
     // 從 enrollments 表計算每門課的實際報名人數
@@ -436,6 +437,8 @@ export default function App() {
         price: c.price || 0,
         description: c.description || '',
         tags: [c.day_of_week, c.venues?.name].filter(Boolean),
+        course_code: c.course_code,
+        status: c.status,
       })))
     }
   };

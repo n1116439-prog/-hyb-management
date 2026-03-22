@@ -39,6 +39,9 @@ export interface Course {
   lastClassDate?: string;
   hasAttendance?: boolean;
   needsAttendance?: boolean;
+  course_code?: string;
+  is_deleted?: boolean;
+  status?: 'active' | 'full' | 'suspended' | 'archived';
 }
 
 export interface WaitlistEntry {
