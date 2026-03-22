@@ -213,6 +213,11 @@ export default function App() {
   const [resetForm, setResetForm] = useState({ password: '', confirm: '' });
   const [resetSaving, setResetSaving] = useState(false);
 
+  // 強制更改密碼
+  const [showForcePasswordChange, setShowForcePasswordChange] = useState(false);
+  const [forceChangeForm, setForceChangeForm] = useState({ password: '', confirm: '' });
+  const [forceChangeSaving, setForceChangeSaving] = useState(false);
+
   // LINE Login
   const [lineProfile, setLineProfile] = useState<{ userId: string; displayName: string; pictureUrl?: string } | null>(null);
   const [showLineBindModal, setShowLineBindModal] = useState(false);
@@ -321,6 +326,20 @@ export default function App() {
               .eq('parent_uid', session.user.id);
             if (myStudents && myStudents.length > 0) {
               setUserCategory(myStudents.some(s => s.category === 'adult') ? 'adult' : 'child');
+            }
+            // 檢查是否需要強制更改密碼
+            try {
+              const { data: forceChange } = await supabase
+                .from('students')
+                .select('force_password_change')
+                .eq('parent_uid', session.user.id)
+                .eq('force_password_change', true)
+                .maybeSingle();
+              if (forceChange) {
+                setShowForcePasswordChange(true);
+              }
+            } catch (err) {
+              console.warn('檢查強制改密碼失敗:', err);
             }
           }
         } else {
@@ -599,6 +618,21 @@ export default function App() {
       }
       if (myStudents && myStudents.length > 0) {
         setUserCategory(myStudents.some(s => s.category === 'adult') ? 'adult' : 'child');
+      }
+
+      // 檢查是否需要強制更改密碼
+      try {
+        const { data: forceChange } = await supabase
+          .from('students')
+          .select('force_password_change')
+          .eq('parent_uid', data.user.id)
+          .eq('force_password_change', true)
+          .maybeSingle();
+        if (forceChange) {
+          setShowForcePasswordChange(true);
+        }
+      } catch (err) {
+        console.warn('檢查強制改密碼失敗:', err);
       }
 
       setIsLoginOpen(false);
@@ -1003,6 +1037,63 @@ export default function App() {
         );
     }
   };
+
+  // 強制更改密碼全屏頁面
+  if (showForcePasswordChange) {
+    return (
+      <div className="bg-gradient-to-b from-slate-50 to-white min-h-screen flex items-center justify-center px-4">
+        <div className="bg-white rounded-2xl shadow-lg max-w-md w-full p-8 space-y-6">
+          <div className="flex flex-col items-center gap-4">
+            <div className="w-16 h-16 rounded-2xl flex items-center justify-center bg-amber-100">
+              <Lock size={32} className="text-amber-600" />
+            </div>
+            <p className="text-xl font-bold text-neutral-900">請更改密碼</p>
+            <p className="text-sm text-neutral-500 text-center">您使用的是臨時密碼，為了帳號安全請立即設定新密碼</p>
+          </div>
+          <div className="space-y-4">
+            <FormField label="新密碼">
+              <Input
+                type="password"
+                placeholder="請輸入新密碼（至少 6 位）"
+                value={forceChangeForm.password}
+                onChange={e => setForceChangeForm(prev => ({ ...prev, password: e.target.value }))}
+              />
+            </FormField>
+            <FormField label="確認密碼">
+              <Input
+                type="password"
+                placeholder="再次輸入新密碼"
+                value={forceChangeForm.confirm}
+                onChange={e => setForceChangeForm(prev => ({ ...prev, confirm: e.target.value }))}
+              />
+            </FormField>
+            <Button
+              variant="primary"
+              loading={forceChangeSaving}
+              className="w-full h-14 rounded-2xl"
+              onClick={async () => {
+                if (forceChangeForm.password.length < 6) { alert('密碼至少 6 位'); return; }
+                if (forceChangeForm.password !== forceChangeForm.confirm) { alert('兩次密碼不一致'); return; }
+                setForceChangeSaving(true);
+                const { error } = await supabase.auth.updateUser({ password: forceChangeForm.password });
+                if (error) { alert('更新失敗：' + error.message); setForceChangeSaving(false); return; }
+                const { data: { user } } = await supabase.auth.getUser();
+                if (user) {
+                  await supabase.from('students').update({ force_password_change: false }).eq('parent_uid', user.id);
+                }
+                setForceChangeSaving(false);
+                setShowForcePasswordChange(false);
+                setForceChangeForm({ password: '', confirm: '' });
+                alert('密碼已更新！');
+              }}
+            >
+              確認更改
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // 重設密碼全屏頁面
   if (showResetPassword) {
