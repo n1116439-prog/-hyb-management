@@ -71,6 +71,8 @@ export const AdminStudentManagement: React.FC<{
   const [importMode, setImportMode] = useState<'excel' | 'paste'>('excel')
   const [pasteText1, setPasteText1] = useState('')
   const [pasteText2, setPasteText2] = useState('')
+  const [pasteErrors, setPasteErrors] = useState<string[]>([])
+  const [pasteParsing, setPasteParsing] = useState(false)
 
   // 重設密碼
   const [showResetPwModal, setShowResetPwModal] = useState(false)
@@ -981,9 +983,29 @@ export const AdminStudentManagement: React.FC<{
     setDragOver(false)
     setPasteText1('')
     setPasteText2('')
+    setPasteErrors([])
+    setPasteParsing(false)
+  }
+
+  // 民國年日期轉西元 YYYY-MM-DD
+  const normalizeDate = (raw: string): string => {
+    // 已經是 YYYY-MM-DD
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw
+    // 民國年格式：111/3/24 或 111-3-24 或 111.3.24
+    const rocMatch = raw.match(/^(\d{2,3})[/\-.](\d{1,2})[/\-.](\d{1,2})$/)
+    if (rocMatch) {
+      const year = parseInt(rocMatch[1]) + 1911
+      const month = rocMatch[2].padStart(2, '0')
+      const day = rocMatch[3].padStart(2, '0')
+      return `${year}-${month}-${day}`
+    }
+    return raw
   }
 
   const handleParsePaste = async () => {
+    setPasteErrors([])
+    setPasteParsing(true)
+
     // 偵測分隔符
     const detectDelimiter = (text: string): string => {
       const tabCount = (text.match(/\t/g) || []).length
@@ -996,29 +1018,43 @@ export const AdminStudentManagement: React.FC<{
       return ''
     }
 
-    const parseRows = (text: string): any[][] => {
-      if (!text.trim()) return []
+    const parseRows = (text: string, label: string): { rows: any[][], formatError: string | null } => {
+      if (!text.trim()) return { rows: [], formatError: null }
       const delimiter = detectDelimiter(text)
       if (!delimiter) {
-        alert('格式無法辨識，請確認是從表格軟體複製的（Tab、逗號或空格分隔）')
-        return []
+        return { rows: [], formatError: `${label}：格式無法辨識，請確認是從表格軟體複製的（Tab、逗號或空格分隔）` }
       }
-      return text.trim().split('\n')
+      const rows = text.trim().split('\n')
         .map(line => {
           if (delimiter === '  +') {
-            // 多空格分隔：用正則 split
             return line.split(/\s{2,}/).map(cell => cell.trim())
           }
           return line.split(delimiter).map(cell => cell.trim())
         })
         .filter(row => row.some(c => c !== ''))
+      return { rows, formatError: null }
     }
 
-    const dataRows1 = parseRows(pasteText1)
-    const dataRows2 = parseRows(pasteText2)
+    const errors: string[] = []
 
-    if (dataRows1.length === 0 && dataRows2.length === 0) {
-      alert('請至少貼上一種資料（學員堂數或出席紀錄）')
+    const { rows: dataRows1, formatError: fe1 } = parseRows(pasteText1, '學員堂數')
+    const { rows: dataRows2Raw, formatError: fe2 } = parseRows(pasteText2, '出席紀錄')
+    if (fe1) errors.push(fe1)
+    if (fe2) errors.push(fe2)
+
+    // 日期正規化（民國年→西元）
+    const dataRows2 = dataRows2Raw.map(row => {
+      if (row[2]) row[2] = normalizeDate(String(row[2]).trim())
+      return row
+    })
+
+    if (dataRows1.length === 0 && dataRows2.length === 0 && errors.length === 0) {
+      errors.push('請至少貼上一種資料（學員堂數或出席紀錄）')
+    }
+
+    if (errors.length > 0) {
+      setPasteErrors(errors)
+      setPasteParsing(false)
       return
     }
 
@@ -1031,37 +1067,56 @@ export const AdminStudentManagement: React.FC<{
     const studentMap = new Map((allStu || []).map(s => [s.student_code, { id: s.id, name: s.name }]))
     const courseMap = new Map((allCrs || []).map(c => [c.name, c.id]))
 
-    const s1Errors = dataRows1.map((row) => {
+    const s1Errors = dataRows1.map((row, i) => {
       const code = String(row[0] || '').trim()
       const courseName = String(row[1] || '').trim()
       const total = Number(row[2])
       const used = Number(row[3])
-      if (!code) return '學員編號不能為空'
-      if (!studentMap.has(code)) return `找不到學員 ${code}`
-      if (!courseName) return '課程名稱不能為空'
-      if (!courseMap.has(courseName)) return `找不到課程「${courseName}」`
-      if (!Number.isInteger(total) || total <= 0) return '總堂數必須是正整數'
-      if (!Number.isInteger(used) || used < 0) return '已用堂數必須是非負整數'
+      if (!code) return `第 ${i + 1} 行：學員編號不能為空`
+      if (!studentMap.has(code)) return `第 ${i + 1} 行：找不到學員 ${code}`
+      if (!courseName) return `第 ${i + 1} 行：課程名稱不能為空`
+      if (!courseMap.has(courseName)) return `第 ${i + 1} 行：找不到課程「${courseName}」`
+      if (!Number.isInteger(total) || total <= 0) return `第 ${i + 1} 行：總堂數必須是正整數`
+      if (!Number.isInteger(used) || used < 0) return `第 ${i + 1} 行：已用堂數必須是非負整數`
       return null
     })
-    setImportSheet1Errors(s1Errors)
 
     const validStatuses = ['出席', '請假', '缺席', '補課']
-    const s2Errors = dataRows2.map((row) => {
+    const s2Errors = dataRows2.map((row, i) => {
       const code = String(row[0] || '').trim()
       const courseName = String(row[1] || '').trim()
       const date = String(row[2] || '').trim()
       const status = String(row[3] || '').trim()
-      if (!code) return '學員編號不能為空'
-      if (!studentMap.has(code)) return `找不到學員 ${code}`
-      if (!courseName) return '課程名稱不能為空'
-      if (!courseMap.has(courseName)) return `找不到課程「${courseName}」`
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return `日期格式錯誤：${date}`
-      if (!validStatuses.includes(status)) return `狀態必須是 ${validStatuses.join('/')}`
+      if (!code) return `第 ${i + 1} 行：學員編號不能為空`
+      if (!studentMap.has(code)) return `第 ${i + 1} 行：找不到學員 ${code}`
+      if (!courseName) return `第 ${i + 1} 行：課程名稱不能為空`
+      if (!courseMap.has(courseName)) return `第 ${i + 1} 行：找不到課程「${courseName}」`
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return `第 ${i + 1} 行：日期格式錯誤「${date}」（需 YYYY-MM-DD 或民國年如 113/3/24）`
+      if (!validStatuses.includes(status)) return `第 ${i + 1} 行：狀態必須是 ${validStatuses.join('/')}`
       return null
     })
-    setImportSheet2Errors(s2Errors)
 
+    // 收集所有驗證錯誤
+    const allErrors: string[] = []
+    const s1ErrList = s1Errors.filter(e => e !== null) as string[]
+    const s2ErrList = s2Errors.filter(e => e !== null) as string[]
+    if (s1ErrList.length > 0) allErrors.push(`【學員堂數】${s1ErrList.length} 筆錯誤：`, ...s1ErrList.slice(0, 10))
+    if (s1ErrList.length > 10) allErrors.push(`...還有 ${s1ErrList.length - 10} 筆錯誤`)
+    if (s2ErrList.length > 0) allErrors.push(`【出席紀錄】${s2ErrList.length} 筆錯誤：`, ...s2ErrList.slice(0, 10))
+    if (s2ErrList.length > 10) allErrors.push(`...還有 ${s2ErrList.length - 10} 筆錯誤`)
+
+    if (allErrors.length > 0) {
+      setPasteErrors(allErrors)
+      setPasteParsing(false)
+      // 仍然設定 errors 讓 Step 2 也能看到
+      setImportSheet1Errors(s1Errors.map(e => e ?? null))
+      setImportSheet2Errors(s2Errors.map(e => e ?? null))
+      return
+    }
+
+    setImportSheet1Errors(s1Errors.map(e => e ?? null))
+    setImportSheet2Errors(s2Errors.map(e => e ?? null))
+    setPasteParsing(false)
     setImportStep(2)
   }
 
@@ -2394,12 +2449,24 @@ export const AdminStudentManagement: React.FC<{
                     />
                   </div>
 
+                  {/* 錯誤回報 */}
+                  {pasteErrors.length > 0 && (
+                    <div className="bg-red-50 border border-red-200 rounded-xl p-4 space-y-1">
+                      <p className="text-sm font-bold text-red-700">解析錯誤，請修正後重試：</p>
+                      <div className="max-h-48 overflow-y-auto space-y-0.5">
+                        {pasteErrors.map((err, i) => (
+                          <p key={i} className={`text-xs ${err.startsWith('【') || err.startsWith('...') ? 'font-medium text-red-700 mt-1' : 'text-red-600'}`}>{err}</p>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   <button
-                    onClick={handleParsePaste}
-                    disabled={!pasteText1.trim() && !pasteText2.trim()}
+                    onClick={() => { setPasteErrors([]); handleParsePaste() }}
+                    disabled={(!pasteText1.trim() && !pasteText2.trim()) || pasteParsing}
                     className="w-full py-3 bg-primary text-white rounded-xl font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
                   >
-                    解析資料
+                    {pasteParsing ? '解析中...' : '解析資料'}
                   </button>
                 </div>
               )}
