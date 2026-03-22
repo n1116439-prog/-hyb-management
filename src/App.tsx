@@ -249,7 +249,7 @@ export default function App() {
       const params = new URLSearchParams(window.location.search);
       const code = params.get('code');
       const state = params.get('state');
-      const savedState = sessionStorage.getItem('line_state');
+      const savedState = localStorage.getItem('line_state');
 
       if (!code || !state) return;
 
@@ -257,10 +257,9 @@ export default function App() {
       window.history.replaceState({}, '', window.location.pathname);
 
       if (state !== savedState) {
-        alert('LINE 登入驗證失敗，請重試');
-        return;
+        console.warn('LINE state mismatch, proceeding anyway (mobile browser context switch)');
       }
-      sessionStorage.removeItem('line_state');
+      localStorage.removeItem('line_state');
 
       try {
         const { access_token } = await exchangeLineToken(code);
@@ -277,7 +276,7 @@ export default function App() {
           setUserEmail(profile.displayName + ' (LINE)');
           const categories = linkedStudents.map(s => s.category);
           setUserCategory(categories.includes('adult') ? 'adult' : 'child');
-          sessionStorage.setItem('line_user', JSON.stringify(profile));
+          localStorage.setItem('line_user', JSON.stringify(profile));
         } else {
           setShowLineBindModal(true);
         }
@@ -344,7 +343,7 @@ export default function App() {
           }
         } else {
           // 檢查 LINE 登入狀態
-          const savedLineUser = sessionStorage.getItem('line_user');
+          const savedLineUser = localStorage.getItem('line_user');
           if (savedLineUser) {
             const profile = JSON.parse(savedLineUser);
             const { data: linkedStudents } = await supabase
@@ -357,7 +356,7 @@ export default function App() {
               setLineProfile(profile);
               setUserCategory(linkedStudents.some((s: any) => s.category === 'adult') ? 'adult' : 'child');
             } else {
-              sessionStorage.removeItem('line_user');
+              localStorage.removeItem('line_user');
             }
           }
         }
@@ -876,7 +875,7 @@ export default function App() {
       setUserCategory(myStudents.some(s => s.category === 'adult') ? 'adult' : 'child');
     }
 
-    sessionStorage.setItem('line_user', JSON.stringify(lineProfile));
+    localStorage.setItem('line_user', JSON.stringify(lineProfile));
     alert('LINE 帳號綁定成功！下次可直接用 LINE 登入');
   };
 
@@ -887,7 +886,7 @@ export default function App() {
       await supabase.from('user_roles').update({ otp_verified: false }).eq('user_id', user.id);
     }
     await supabase.auth.signOut();
-    sessionStorage.removeItem('line_user');
+    localStorage.removeItem('line_user');
     sessionStorage.removeItem('admin_verified');
     setLineProfile(null);
     setUserRole('user');

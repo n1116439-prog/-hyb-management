@@ -5,7 +5,7 @@ const LINE_CALLBACK_URL = import.meta.env.VITE_LINE_CALLBACK_URL || ''
 // 產生 LINE 授權 URL
 export function getLineLoginUrl(): string {
   const state = crypto.randomUUID()
-  sessionStorage.setItem('line_state', state)
+  localStorage.setItem('line_state', state)
   const params = new URLSearchParams({
     response_type: 'code',
     client_id: LINE_CLIENT_ID,
