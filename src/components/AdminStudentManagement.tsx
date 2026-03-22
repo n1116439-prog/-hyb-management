@@ -32,7 +32,10 @@ import {
   History,
   Plus,
   X,
-  Upload
+  Upload,
+  Key,
+  Copy,
+  CheckCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Button, Input, Select, Badge, ProgressBar, FormField } from './UI';
@@ -65,6 +68,13 @@ export const AdminStudentManagement: React.FC<{
   } | null>(null)
   const [importing, setImporting] = useState(false)
   const [dragOver, setDragOver] = useState(false)
+
+  // 重設密碼
+  const [showResetPwModal, setShowResetPwModal] = useState(false)
+  const [resetPwStudent, setResetPwStudent] = useState<any>(null)
+  const [resetPwLoading, setResetPwLoading] = useState(false)
+  const [resetPwResult, setResetPwResult] = useState<string | null>(null)
+  const [resetPwCopied, setResetPwCopied] = useState(false)
 
   const fetchStudents = async () => {
     setLoading(true)
@@ -1339,6 +1349,23 @@ export const AdminStudentManagement: React.FC<{
                       <ChevronRight size={16} />
                     </button>
                     <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        if (!student.parentUid) {
+                          alert('此學員尚未註冊帳號')
+                          return
+                        }
+                        setResetPwStudent(student)
+                        setResetPwResult(null)
+                        setResetPwCopied(false)
+                        setShowResetPwModal(true)
+                      }}
+                      className="w-9 h-9 flex items-center justify-center rounded-xl bg-neutral-50 text-neutral-400 hover:bg-amber-50 hover:text-amber-600 transition-colors"
+                      title="重設密碼"
+                    >
+                      <Key size={16} />
+                    </button>
+                    <button
                       onClick={() => handleDeleteStudent(student.id)}
                       className="w-9 h-9 flex items-center justify-center rounded-xl bg-neutral-50 text-neutral-400 hover:bg-danger/10 hover:text-danger transition-colors"
                       title="刪除學員"
@@ -2390,6 +2417,84 @@ export const AdminStudentManagement: React.FC<{
                 </div>
               )}
             </div>
+          </div>
+        </div>
+      )}
+      {/* 重設密碼 Modal */}
+      {showResetPwModal && resetPwStudent && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={() => { setShowResetPwModal(false); setResetPwResult(null); }}>
+          <div className="absolute inset-0 bg-neutral-900/40" />
+          <div className="relative bg-white rounded-2xl max-w-md w-full p-6 space-y-5" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-bold">重設學員密碼</h3>
+              <button onClick={() => { setShowResetPwModal(false); setResetPwResult(null); }} className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-neutral-100">
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="bg-neutral-50 rounded-xl p-4 space-y-1">
+              <p className="text-sm"><span className="text-neutral-500">學員姓名：</span><span className="font-medium">{resetPwStudent.studentName}</span></p>
+              <p className="text-sm"><span className="text-neutral-500">學員編號：</span><span className="font-mono">{resetPwStudent.studentCode || '—'}</span></p>
+            </div>
+
+            {!resetPwResult ? (
+              <>
+                <p className="text-sm text-neutral-600">將為此學員產生臨時密碼，學員登入後需立即更改密碼。</p>
+                <button
+                  disabled={resetPwLoading}
+                  onClick={async () => {
+                    setResetPwLoading(true)
+                    try {
+                      const tempPassword = Math.random().toString(36).slice(-6).toUpperCase()
+                      const { error } = await supabase.rpc('admin_reset_password', {
+                        target_user_id: resetPwStudent.parentUid,
+                        new_password: tempPassword,
+                      })
+                      if (error) {
+                        alert('重設密碼失敗：' + error.message)
+                        setResetPwLoading(false)
+                        return
+                      }
+                      await supabase.from('students').update({ force_password_change: true }).eq('parent_uid', resetPwStudent.parentUid)
+                      setResetPwResult(tempPassword)
+                    } catch (err: any) {
+                      alert('重設密碼失敗：' + (err.message || err))
+                    }
+                    setResetPwLoading(false)
+                  }}
+                  className="w-full py-3 bg-primary text-white rounded-xl font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+                >
+                  {resetPwLoading ? '處理中...' : '產生臨時密碼'}
+                </button>
+              </>
+            ) : (
+              <div className="space-y-4">
+                <p className="text-sm text-green-700 font-medium">密碼已重設成功！請將以下臨時密碼提供給學員：</p>
+                <div className="relative">
+                  <div className="text-2xl font-mono bg-neutral-100 p-4 rounded-xl text-center tracking-widest select-all">
+                    {resetPwResult}
+                  </div>
+                  <button
+                    onClick={async () => {
+                      await navigator.clipboard.writeText(resetPwResult)
+                      setResetPwCopied(true)
+                      setTimeout(() => setResetPwCopied(false), 2000)
+                    }}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 p-2 rounded-lg hover:bg-neutral-200 transition-colors"
+                    title="複製密碼"
+                  >
+                    {resetPwCopied ? <CheckCircle size={18} className="text-green-600" /> : <Copy size={18} className="text-neutral-400" />}
+                  </button>
+                </div>
+                {resetPwCopied && <p className="text-xs text-green-600 text-center">已複製！</p>}
+                <button
+                  onClick={() => { setShowResetPwModal(false); setResetPwResult(null); }}
+                  className="w-full py-3 bg-neutral-100 text-neutral-700 rounded-xl font-medium hover:bg-neutral-200 transition-colors"
+                >
+                  關閉
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
