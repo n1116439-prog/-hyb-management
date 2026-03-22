@@ -94,7 +94,7 @@ export const AdminDashboard: React.FC = () => {
     setMonthlyClasses(uniqueClasses.size)
 
     // Active courses
-    const { count: cCount } = await supabase.from('courses').select('id', { count: 'exact', head: true }).eq('is_active', true)
+    const { count: cCount } = await supabase.from('courses').select('id', { count: 'exact', head: true }).eq('is_active', true).eq('is_deleted', false)
     setActiveCourses(cCount || 0)
 
     // Expiring credits (within 14 days)
@@ -119,8 +119,8 @@ export const AdminDashboard: React.FC = () => {
   }
 
   const fetchTodayCourses = async () => {
-    const { data } = await supabase.from('courses').select('*, coaches(name), venues(name)')
-      .eq('day_of_week', todayWeekday).eq('is_active', true).order('start_time')
+    const { data } = await supabase.from('courses').select('*, coaches(name), venues(name), course_code')
+      .eq('day_of_week', todayWeekday).eq('is_active', true).eq('is_deleted', false).order('start_time')
 
     // Get enrollment counts
     const courseIds = (data || []).map(c => c.id)
@@ -133,14 +133,14 @@ export const AdminDashboard: React.FC = () => {
   }
 
   const fetchWeekCourses = async () => {
-    const { data } = await supabase.from('courses').select('*, coaches(name), venues(name)')
-      .eq('is_active', true).order('start_time')
+    const { data } = await supabase.from('courses').select('*, coaches(name), venues(name), course_code')
+      .eq('is_active', true).eq('is_deleted', false).order('start_time')
     setWeekCourses(data || [])
   }
 
   const fetchRecentEnrollments = async () => {
     const sevenDaysAgo = formatLocalDate(new Date(now.getTime() - 7 * 86400000))
-    const { data } = await supabase.from('enrollments').select('*, students(name, student_code), courses(name)')
+    const { data } = await supabase.from('enrollments').select('*, students(name, student_code), courses(name, course_code)')
       .gte('enrolled_at', sevenDaysAgo + 'T00:00:00')
       .order('enrolled_at', { ascending: false }).limit(5)
     setRecentEnrollments(data || [])
@@ -338,7 +338,10 @@ export const AdminDashboard: React.FC = () => {
                   {todayCourses.map(c => (
                     <div key={c.id} className="flex items-center justify-between bg-neutral-50 rounded-xl px-4 py-3">
                       <div>
-                        <p className="font-medium text-sm text-neutral-900">{c.name}</p>
+                        <div className="flex items-center gap-2">
+                          <p className="font-medium text-sm text-neutral-900">{c.name}</p>
+                          {c.course_code && <span className="text-xs px-2 py-0.5 rounded-full bg-purple-50 text-purple-600 font-medium">{c.course_code}</span>}
+                        </div>
                         <div className="flex items-center gap-3 text-xs text-neutral-500 mt-0.5">
                           <span className="flex items-center gap-1"><Clock size={12} /> {c.start_time?.slice(0, 5)}-{c.end_time?.slice(0, 5)}</span>
                           <span className="flex items-center gap-1"><User size={12} /> {c.coaches?.name || '—'}</span>
@@ -371,7 +374,7 @@ export const AdminDashboard: React.FC = () => {
                         <div className="space-y-1.5">
                           {dayCourses.map(c => (
                             <div key={c.id} className="flex items-center justify-between text-sm px-3 py-2 bg-neutral-50 rounded-lg">
-                              <span className="text-neutral-700">{c.name}</span>
+                              <span className="text-neutral-700">{c.name} {c.course_code && <span className="text-xs px-2 py-0.5 rounded-full bg-purple-50 text-purple-600 font-medium ml-1">{c.course_code}</span>}</span>
                               <span className="text-xs text-neutral-400">{c.start_time?.slice(0, 5)}-{c.end_time?.slice(0, 5)} · {c.venues?.name || ''}</span>
                             </div>
                           ))}
@@ -412,7 +415,10 @@ export const AdminDashboard: React.FC = () => {
                             <span className="font-medium text-sm">{e.students?.name || '—'}</span>
                             <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600">{e.students?.student_code || ''}</span>
                           </div>
-                          <p className="text-xs text-neutral-400">{e.courses?.name || '—'}</p>
+                          <p className="text-xs text-neutral-400">
+                            {e.courses?.name || '—'}
+                            {e.courses?.course_code && <span className="ml-1 text-xs px-2 py-0.5 rounded-full bg-purple-50 text-purple-600 font-medium">{e.courses.course_code}</span>}
+                          </p>
                         </div>
                       </div>
                       <span className="text-xs text-neutral-400 shrink-0">{getRelativeTime(e.enrolled_at || e.created_at)}</span>

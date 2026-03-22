@@ -118,8 +118,9 @@ export const AdminCoachPayroll: React.FC = () => {
       // Get courses for this coach
       const { data: courses } = await supabase
         .from('courses')
-        .select('id, day_of_week')
+        .select('id, day_of_week, course_code')
         .eq('coach_id', coach.id)
+        .eq('is_deleted', false)
 
       if (!courses || courses.length === 0) continue
 
@@ -245,8 +246,9 @@ export const AdminCoachPayroll: React.FC = () => {
 
     const { data: courses } = await supabase
       .from('courses')
-      .select('id, name, day_of_week, start_time, end_time, venues(name)')
+      .select('id, name, course_code, day_of_week, start_time, end_time, venues(name)')
       .eq('coach_id', coachId)
+      .eq('is_deleted', false)
 
     const { data: holidays } = await supabase
       .from('course_holidays')
@@ -275,6 +277,7 @@ export const AdminCoachPayroll: React.FC = () => {
       stats.push({
         courseId: course.id,
         courseName: course.name,
+        courseCode: (course as any).course_code || '',
         dayOfWeek: course.day_of_week,
         time: `${course.start_time?.slice(0, 5)}-${course.end_time?.slice(0, 5)}`,
         venue: (course.venues as any)?.name || '',
@@ -482,7 +485,10 @@ export const AdminCoachPayroll: React.FC = () => {
                                     {detailStats.map(st => (
                                       <div key={st.courseId} className="flex items-center justify-between bg-white rounded-lg p-3 border border-neutral-100">
                                         <div>
-                                          <p className="font-medium text-sm">{st.courseName}</p>
+                                          <div className="flex items-center gap-2">
+                                            <p className="font-medium text-sm">{st.courseName}</p>
+                                            {st.courseCode && <span className="text-xs px-2 py-0.5 rounded-full bg-purple-50 text-purple-600 font-medium">{st.courseCode}</span>}
+                                          </div>
                                           <p className="text-xs text-neutral-500">{st.dayOfWeek} {st.time} · {st.venue}</p>
                                         </div>
                                         <span className="font-bold text-primary text-sm">{st.classCount} 堂</span>

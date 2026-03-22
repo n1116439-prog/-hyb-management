@@ -36,7 +36,7 @@ export const AdminTrialManagement: React.FC<{ courses?: any[] }> = ({ courses: p
     setLoading(true)
     const { data, error } = await supabase
       .from('trial_bookings')
-      .select('*, students(id, name, phone, student_code, student_number), courses(id, name, day_of_week, start_time, end_time, venues(name))')
+      .select('*, students(id, name, phone, student_code, student_number), courses(id, name, course_code, day_of_week, start_time, end_time, venues(name))')
       .order('created_at', { ascending: false })
     console.log('trial_bookings data:', data, 'error:', error)
     setBookings(data || [])
@@ -48,7 +48,7 @@ export const AdminTrialManagement: React.FC<{ courses?: any[] }> = ({ courses: p
       setAllCourses(propCourses)
       return
     }
-    const { data } = await supabase.from('courses').select('id, name, day_of_week, start_time, end_time').order('name')
+    const { data } = await supabase.from('courses').select('id, name, course_code, day_of_week, start_time, end_time').eq('is_deleted', false).order('name')
     setAllCourses(data || [])
   }
 
@@ -270,11 +270,12 @@ export const AdminTrialManagement: React.FC<{ courses?: any[] }> = ({ courses: p
                         </span>
                       )}
                     </div>
-                    <p className="text-sm text-neutral-700">
-                      {course?.name || '未知課程'}
-                      {course?.start_time && ` · ${course.start_time.slice(0, 5)}-${course.end_time?.slice(0, 5)}`}
-                      {course?.venues?.name && ` · ${course.venues.name}`}
-                    </p>
+                    <div className="flex items-center gap-2 text-sm text-neutral-700">
+                      <span>{course?.name || '未知課程'}</span>
+                      {course?.course_code && <span className="text-xs px-2 py-0.5 rounded-full bg-purple-50 text-purple-600 font-medium">{course.course_code}</span>}
+                      {course?.start_time && <span className="text-neutral-400">· {course.start_time.slice(0, 5)}-{course.end_time?.slice(0, 5)}</span>}
+                      {course?.venues?.name && <span className="text-neutral-400">· {course.venues.name}</span>}
+                    </div>
                     <p className="text-sm font-medium text-primary">
                       <Calendar size={14} className="inline mr-1" />
                       {trialDate || '未選日期'} {weekday}
@@ -376,7 +377,7 @@ export const AdminTrialManagement: React.FC<{ courses?: any[] }> = ({ courses: p
             <h3 className="text-lg font-bold text-neutral-900">代理報名</h3>
             <div className="space-y-2 text-sm">
               <p><span className="text-neutral-500">學員：</span>{enrollModalBooking.students?.name}</p>
-              <p><span className="text-neutral-500">班級：</span>{enrollModalBooking.courses?.name}</p>
+              <p><span className="text-neutral-500">班級：</span>{enrollModalBooking.courses?.name} {enrollModalBooking.courses?.course_code && <span className="text-xs px-2 py-0.5 rounded-full bg-purple-50 text-purple-600 font-medium ml-1">{enrollModalBooking.courses.course_code}</span>}</p>
             </div>
             <div className="space-y-2">
               <label className="text-sm font-medium text-neutral-700">選擇方案</label>

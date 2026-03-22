@@ -94,7 +94,7 @@ export const AdminStudentManagement: React.FC<{
 
     const { data: enrollmentsData } = await supabase
       .from('enrollments')
-      .select('student_id, course_id, status, courses(name)')
+      .select('student_id, course_id, status, courses(name, course_code)')
       .eq('status', '已報名')
 
     const { data: creditsData } = await supabase
@@ -129,6 +129,7 @@ export const AdminStudentManagement: React.FC<{
         createdAt: s.created_at || '',
         // 報名班級
         courses: studentEnrollments.map((e: any) => (e.courses as any)?.name || '').filter(Boolean),
+        coursesRaw: studentEnrollments.map((e: any) => ({ name: (e.courses as any)?.name || '', course_code: (e.courses as any)?.course_code || '' })).filter((c: any) => c.name),
         coursesDisplay: studentEnrollments.map((e: any) => (e.courses as any)?.name || '').filter(Boolean).join('、') || '未報名',
         // 堂數
         totalCredits: studentCredits.reduce((sum: number, c: any) => sum + (c.total_credits || 0), 0),
@@ -184,7 +185,7 @@ export const AdminStudentManagement: React.FC<{
   const fetchStudentAttendance = async (studentId: string) => {
     const { data } = await supabase
       .from('attendance')
-      .select('id, date, status, deducted, courses(name, start_time, end_time, venues(name))')
+      .select('id, date, status, deducted, courses(name, course_code, start_time, end_time, venues(name))')
       .eq('student_id', studentId)
       .order('date', { ascending: false })
       .limit(50)
@@ -220,14 +221,14 @@ export const AdminStudentManagement: React.FC<{
   }
 
   const fetchAllCourses = async () => {
-    const { data } = await supabase.from('courses').select('id, name, category, day_of_week, start_time, end_time, venue_id, venues(name)')
+    const { data } = await supabase.from('courses').select('id, name, course_code, category, day_of_week, start_time, end_time, venue_id, venues(name)').eq('is_deleted', false)
     if (data) setAllCourses(data)
   }
 
   const fetchStudentDetail = async (studentId: string) => {
     const { data: enrollments } = await supabase
       .from('enrollments')
-      .select('*, courses(id, name, day_of_week, start_time, end_time, venues(name))')
+      .select('*, courses(id, name, course_code, day_of_week, start_time, end_time, venues(name))')
       .eq('student_id', studentId)
     setStudentEnrollments(enrollments || [])
 
@@ -241,7 +242,7 @@ export const AdminStudentManagement: React.FC<{
   const fetchCourseAttendance = async (studentId: string) => {
     const { data: enrollments } = await supabase
       .from('enrollments')
-      .select('course_id, status, courses(id, name, day_of_week, start_time, end_time, venues(name))')
+      .select('course_id, status, courses(id, name, course_code, day_of_week, start_time, end_time, venues(name))')
       .eq('student_id', studentId)
       .eq('status', '已報名')
 
@@ -1440,7 +1441,14 @@ export const AdminStudentManagement: React.FC<{
                   </div>
                 </td>
                 <td className="px-8 py-6">
-                  <p className="text-sm font-bold text-neutral-900 leading-tight">{student.coursesDisplay}</p>
+                  <div className="space-y-1">
+                    {(student.coursesRaw && student.coursesRaw.length > 0) ? student.coursesRaw.map((c: any, idx: number) => (
+                      <div key={idx} className="flex items-center gap-1.5">
+                        <span className="text-sm font-bold text-neutral-900 leading-tight">{c.name}</span>
+                        {c.course_code && <span className="text-xs px-2 py-0.5 rounded-full bg-purple-50 text-purple-600 font-medium">{c.course_code}</span>}
+                      </div>
+                    )) : <p className="text-sm font-bold text-neutral-900 leading-tight">未報名</p>}
+                  </div>
                 </td>
                 <td className="px-8 py-6">
                   <div className="flex items-center gap-2">
@@ -1687,6 +1695,7 @@ export const AdminStudentManagement: React.FC<{
                                   <Calendar size={20} />
                                 </div>
                                 <p className="font-bold text-neutral-900">{(enrollment.courses as any)?.name || '未知課程'}</p>
+                                {(enrollment.courses as any)?.course_code && <span className="text-xs px-2 py-0.5 rounded-full bg-purple-50 text-purple-600 font-medium">{(enrollment.courses as any).course_code}</span>}
                               </div>
                               <div className="flex items-center gap-2">
                                 <Badge variant="accent" className="bg-emerald-50 text-emerald-600">上課中</Badge>
@@ -1740,7 +1749,10 @@ export const AdminStudentManagement: React.FC<{
                                     <Calendar size={16} />
                                   </div>
                                   <div>
-                                    <p className="font-bold text-sm text-neutral-900">{course?.name || '未知課程'}</p>
+                                    <div className="flex items-center gap-2">
+                                      <p className="font-bold text-sm text-neutral-900">{course?.name || '未知課程'}</p>
+                                      {course?.course_code && <span className="text-xs px-2 py-0.5 rounded-full bg-purple-50 text-purple-600 font-medium">{course.course_code}</span>}
+                                    </div>
                                     <p className="text-xs text-neutral-500">
                                       {course?.day_of_week} {course?.start_time?.slice(0,5)}-{course?.end_time?.slice(0,5)}
                                       {course?.venues?.name && ` · ${course.venues.name}`}
