@@ -68,6 +68,9 @@ export const AdminStudentManagement: React.FC<{
   } | null>(null)
   const [importing, setImporting] = useState(false)
   const [dragOver, setDragOver] = useState(false)
+  const [importMode, setImportMode] = useState<'excel' | 'paste'>('excel')
+  const [pasteText1, setPasteText1] = useState('')
+  const [pasteText2, setPasteText2] = useState('')
 
   // 重設密碼
   const [showResetPwModal, setShowResetPwModal] = useState(false)
@@ -976,6 +979,81 @@ export const AdminStudentManagement: React.FC<{
     setImportResult(null)
     setImporting(false)
     setDragOver(false)
+    setPasteText1('')
+    setPasteText2('')
+  }
+
+  const handleParsePaste = async () => {
+    // 偵測分隔符
+    const detectDelimiter = (text: string): string => {
+      const tabCount = (text.match(/\t/g) || []).length
+      const commaCount = (text.match(/,/g) || []).length
+      if (tabCount >= commaCount && tabCount > 0) return '\t'
+      if (commaCount > 0) return ','
+      return ''
+    }
+
+    const parseRows = (text: string): any[][] => {
+      if (!text.trim()) return []
+      const delimiter = detectDelimiter(text)
+      if (!delimiter) {
+        alert('格式無法辨識，請確認是從表格軟體複製的（Tab 或逗號分隔）')
+        return []
+      }
+      return text.trim().split('\n')
+        .map(line => line.split(delimiter).map(cell => cell.trim()))
+        .filter(row => row.some(c => c !== ''))
+    }
+
+    const dataRows1 = parseRows(pasteText1)
+    const dataRows2 = parseRows(pasteText2)
+
+    if (dataRows1.length === 0 && dataRows2.length === 0) {
+      alert('請至少貼上學員堂數資料')
+      return
+    }
+
+    setImportSheet1(dataRows1)
+    setImportSheet2(dataRows2)
+
+    // 複用和 Excel 相同的驗證邏輯
+    const { data: allStu } = await supabase.from('students').select('id, student_code, name')
+    const { data: allCrs } = await supabase.from('courses').select('id, name')
+    const studentMap = new Map((allStu || []).map(s => [s.student_code, { id: s.id, name: s.name }]))
+    const courseMap = new Map((allCrs || []).map(c => [c.name, c.id]))
+
+    const s1Errors = dataRows1.map((row) => {
+      const code = String(row[0] || '').trim()
+      const courseName = String(row[1] || '').trim()
+      const total = Number(row[2])
+      const used = Number(row[3])
+      if (!code) return '學員編號不能為空'
+      if (!studentMap.has(code)) return `找不到學員 ${code}`
+      if (!courseName) return '課程名稱不能為空'
+      if (!courseMap.has(courseName)) return `找不到課程「${courseName}」`
+      if (!Number.isInteger(total) || total <= 0) return '總堂數必須是正整數'
+      if (!Number.isInteger(used) || used < 0) return '已用堂數必須是非負整數'
+      return null
+    })
+    setImportSheet1Errors(s1Errors)
+
+    const validStatuses = ['出席', '請假', '缺席', '補課']
+    const s2Errors = dataRows2.map((row) => {
+      const code = String(row[0] || '').trim()
+      const courseName = String(row[1] || '').trim()
+      const date = String(row[2] || '').trim()
+      const status = String(row[3] || '').trim()
+      if (!code) return '學員編號不能為空'
+      if (!studentMap.has(code)) return `找不到學員 ${code}`
+      if (!courseName) return '課程名稱不能為空'
+      if (!courseMap.has(courseName)) return `找不到課程「${courseName}」`
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return `日期格式錯誤：${date}`
+      if (!validStatuses.includes(status)) return `狀態必須是 ${validStatuses.join('/')}`
+      return null
+    })
+    setImportSheet2Errors(s2Errors)
+
+    setImportStep(2)
   }
 
   const handleImportFile = async (file: File) => {
@@ -2211,9 +2289,26 @@ export const AdminStudentManagement: React.FC<{
                   <button onClick={() => { resetImport(); setShowImportModal(false) }} className="p-2 hover:bg-neutral-100 rounded-xl"><X size={20} /></button>
                 )}
               </div>
+              {/* Import Mode Tabs */}
+              {importStep === 1 && (
+                <div className="flex bg-neutral-100 p-1 rounded-xl mb-4">
+                  <button
+                    onClick={() => { setImportMode('excel'); setPasteText1(''); setPasteText2('') }}
+                    className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${importMode === 'excel' ? 'bg-white shadow-sm text-neutral-900' : 'text-neutral-500'}`}
+                  >
+                    上傳 Excel
+                  </button>
+                  <button
+                    onClick={() => { setImportMode('paste'); setImportFile(null) }}
+                    className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${importMode === 'paste' ? 'bg-white shadow-sm text-neutral-900' : 'text-neutral-500'}`}
+                  >
+                    貼上資料
+                  </button>
+                </div>
+              )}
               {/* Step Indicator */}
               <div className="flex items-center justify-between gap-2">
-                {['上傳檔案', '資料預覽', '匯入中', '匯入結果'].map((label, i) => {
+                {[(importMode === 'paste' && importStep === 1 ? '貼上資料' : '上傳檔案'), '資料預覽', '匯入中', '匯入結果'].map((label, i) => {
                   const s = i + 1
                   const active = importStep === s
                   const done = importStep > s
@@ -2231,8 +2326,8 @@ export const AdminStudentManagement: React.FC<{
 
             {/* Body */}
             <div className="flex-1 overflow-y-auto p-6">
-              {/* Step 1: Upload */}
-              {importStep === 1 && (
+              {/* Step 1: Upload or Paste */}
+              {importStep === 1 && importMode === 'excel' && (
                 <div className="space-y-4">
                   <div
                     className={`border-2 border-dashed rounded-2xl p-12 text-center transition-colors cursor-pointer ${dragOver ? 'border-primary bg-primary/5' : 'border-neutral-300 hover:border-primary'}`}
@@ -2251,6 +2346,52 @@ export const AdminStudentManagement: React.FC<{
                     <p>Sheet 2（出席紀錄）欄位：學員編號、課程名稱、日期(YYYY-MM-DD)、狀態(出席/請假/缺席/補課)、備註</p>
                     <p className="text-neutral-400">前 5 行為標題列，第 6 行起為資料</p>
                   </div>
+                </div>
+              )}
+
+              {importStep === 1 && importMode === 'paste' && (
+                <div className="space-y-6">
+                  {/* Textarea 1: 學員堂數 */}
+                  <div className="space-y-2">
+                    <div>
+                      <p className="font-bold text-neutral-700">學員堂數資料</p>
+                      <p className="text-sm text-neutral-500">從 Numbers/Excel 複製表格後貼上，每行一位學員</p>
+                    </div>
+                    <div className="bg-neutral-50 rounded-lg px-3 py-2 text-xs text-neutral-400 font-mono">
+                      格式：學員編號 [Tab] 課程名稱 [Tab] 總堂數 [Tab] 已用堂數 [Tab] 剩餘堂數 [Tab] 方案名稱 [Tab] 到期日
+                    </div>
+                    <textarea
+                      value={pasteText1}
+                      onChange={e => setPasteText1(e.target.value)}
+                      placeholder={'ST-001\t兒童班 週六 16:00\t12\t3\t9\t兒童12堂方案\t2026-06-30'}
+                      className="w-full h-[200px] border border-neutral-200 rounded-xl p-4 font-mono text-sm whitespace-pre resize-none focus:ring-2 focus:ring-primary/30 focus:border-primary outline-none"
+                    />
+                  </div>
+
+                  {/* Textarea 2: 出席紀錄 */}
+                  <div className="space-y-2">
+                    <div>
+                      <p className="font-bold text-neutral-700">出席紀錄資料</p>
+                      <p className="text-sm text-neutral-500">每行一筆出席紀錄，可留空（只匯入堂數不匯入出席）</p>
+                    </div>
+                    <div className="bg-neutral-50 rounded-lg px-3 py-2 text-xs text-neutral-400 font-mono">
+                      格式：學員編號 [Tab] 課程名稱 [Tab] 日期 [Tab] 狀態 [Tab] 備註
+                    </div>
+                    <textarea
+                      value={pasteText2}
+                      onChange={e => setPasteText2(e.target.value)}
+                      placeholder={'ST-001\t兒童班 週六 16:00\t2026-01-04\t出席\t'}
+                      className="w-full h-[200px] border border-neutral-200 rounded-xl p-4 font-mono text-sm whitespace-pre resize-none focus:ring-2 focus:ring-primary/30 focus:border-primary outline-none"
+                    />
+                  </div>
+
+                  <button
+                    onClick={handleParsePaste}
+                    disabled={!pasteText1.trim()}
+                    className="w-full py-3 bg-primary text-white rounded-xl font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+                  >
+                    解析資料
+                  </button>
                 </div>
               )}
 
