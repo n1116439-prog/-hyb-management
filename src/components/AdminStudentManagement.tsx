@@ -990,6 +990,9 @@ export const AdminStudentManagement: React.FC<{
       const commaCount = (text.match(/,/g) || []).length
       if (tabCount >= commaCount && tabCount > 0) return '\t'
       if (commaCount > 0) return ','
+      // 嘗試多空格分隔（2個以上連續空格）
+      const multiSpaceCount = (text.match(/  +/g) || []).length
+      if (multiSpaceCount > 0) return '  +'
       return ''
     }
 
@@ -997,11 +1000,17 @@ export const AdminStudentManagement: React.FC<{
       if (!text.trim()) return []
       const delimiter = detectDelimiter(text)
       if (!delimiter) {
-        alert('格式無法辨識，請確認是從表格軟體複製的（Tab 或逗號分隔）')
+        alert('格式無法辨識，請確認是從表格軟體複製的（Tab、逗號或空格分隔）')
         return []
       }
       return text.trim().split('\n')
-        .map(line => line.split(delimiter).map(cell => cell.trim()))
+        .map(line => {
+          if (delimiter === '  +') {
+            // 多空格分隔：用正則 split
+            return line.split(/\s{2,}/).map(cell => cell.trim())
+          }
+          return line.split(delimiter).map(cell => cell.trim())
+        })
         .filter(row => row.some(c => c !== ''))
     }
 
@@ -1009,7 +1018,7 @@ export const AdminStudentManagement: React.FC<{
     const dataRows2 = parseRows(pasteText2)
 
     if (dataRows1.length === 0 && dataRows2.length === 0) {
-      alert('請至少貼上學員堂數資料')
+      alert('請至少貼上一種資料（學員堂數或出席紀錄）')
       return
     }
 
@@ -2387,7 +2396,7 @@ export const AdminStudentManagement: React.FC<{
 
                   <button
                     onClick={handleParsePaste}
-                    disabled={!pasteText1.trim()}
+                    disabled={!pasteText1.trim() && !pasteText2.trim()}
                     className="w-full py-3 bg-primary text-white rounded-xl font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
                   >
                     解析資料
