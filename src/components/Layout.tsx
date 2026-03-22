@@ -87,7 +87,7 @@ export const Layout: React.FC<LayoutProps> = ({
 
           <div className="flex flex-col lg:flex-row items-stretch lg:items-center lg:gap-4 w-full lg:w-auto">
             {/* Desktop Navigation */}
-            <nav className="hidden lg:flex items-center gap-1 flex-nowrap overflow-x-auto">
+            <nav className="hidden lg:flex items-center gap-1 flex-nowrap overflow-x-auto flex-shrink min-w-0">
               {tabs.map((tab) => {
                 const isActive = activeTab === tab.id;
                 const Icon = tab.icon;
@@ -144,9 +144,9 @@ export const Layout: React.FC<LayoutProps> = ({
               )}
             </AnimatePresence>
             
-            <div className="h-8 w-px bg-neutral-100 mx-2 hidden lg:block" />
-            
-            <div className="hidden lg:flex items-center gap-3">
+            <div className="h-8 w-px bg-neutral-100 mx-2 hidden lg:block flex-shrink-0" />
+
+            <div className="hidden lg:flex items-center gap-3 flex-shrink-0">
               {rightAction}
             </div>
           </div>
