@@ -14,13 +14,13 @@ interface LayoutProps {
   userRole?: 'user' | 'admin' | 'student';
 }
 
-export const Layout: React.FC<LayoutProps> = ({ 
-  children, 
-  activeTab, 
-  onTabChange, 
-  title = "恆躍羽球學院", 
-  showBack = false, 
-  onBack, 
+export const Layout: React.FC<LayoutProps> = ({
+  children,
+  activeTab,
+  onTabChange,
+  title = "恆躍羽球學院",
+  showBack = false,
+  onBack,
   rightAction,
   userRole = 'user'
 }) => {
@@ -47,7 +47,111 @@ export const Layout: React.FC<LayoutProps> = ({
   ];
 
   const tabs = userRole === 'admin' ? adminTabs : studentTabs.filter(t => t.id !== 'profile' || userRole !== 'user');
+  const isAdmin = userRole === 'admin';
 
+  // 管理員：左側邊欄 + 頂部精簡 header
+  if (isAdmin) {
+    return (
+      <div className="flex min-h-screen bg-neutral-50">
+        {/* Desktop Sidebar */}
+        <aside className="hidden lg:flex flex-col w-56 bg-white border-r border-neutral-100 fixed inset-y-0 left-0 z-40">
+          <div className="flex items-center gap-3 px-5 h-16 border-b border-neutral-100">
+            <div className="p-1.5 bg-primary/10 rounded-lg">
+              <LayoutDashboard size={20} className="text-primary" />
+            </div>
+            <div>
+              <h1 className="text-base font-bold text-neutral-900">管理後台</h1>
+              <span className="text-[10px] font-bold text-primary uppercase tracking-widest">Admin</span>
+            </div>
+          </div>
+          <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-1">
+            {adminTabs.map((tab) => {
+              const isActive = activeTab === tab.id;
+              const Icon = tab.icon;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => onTabChange(tab.id)}
+                  className={`flex items-center gap-3 w-full px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                    isActive
+                      ? 'text-primary bg-primary/10 font-bold'
+                      : 'text-neutral-500 hover:bg-neutral-50 hover:text-neutral-700'
+                  }`}
+                >
+                  <Icon size={18} />
+                  <span>{tab.label}</span>
+                </button>
+              );
+            })}
+          </nav>
+        </aside>
+
+        {/* Main area */}
+        <div className="flex flex-col flex-1 lg:ml-56">
+          {/* Top Header */}
+          <header className="bg-white border-b border-neutral-100 sticky top-0 z-30 shadow-sm">
+            <div className="px-4 sm:px-6 lg:px-8 flex items-center justify-between h-16">
+              {/* Mobile: hamburger + title */}
+              <div className="flex items-center gap-3 lg:hidden">
+                <button
+                  onClick={() => setIsMenuOpen(!isMenuOpen)}
+                  className="p-2 bg-primary/10 rounded-xl transition-transform active:scale-95"
+                >
+                  {isMenuOpen ? <X size={24} className="text-primary" /> : <Menu size={24} className="text-primary" />}
+                </button>
+                <h1 className="text-lg font-bold text-neutral-900">管理後台</h1>
+              </div>
+              {/* Desktop: 空的左邊 */}
+              <div className="hidden lg:block" />
+              {/* Right action */}
+              <div className="flex items-center gap-3">
+                {rightAction}
+              </div>
+            </div>
+
+            {/* Mobile Navigation */}
+            <AnimatePresence>
+              {isMenuOpen && (
+                <motion.nav
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  className="lg:hidden flex flex-col gap-1 px-4 pb-4 overflow-hidden"
+                >
+                  {adminTabs.map((tab) => {
+                    const isActive = activeTab === tab.id;
+                    const Icon = tab.icon;
+                    return (
+                      <button
+                        key={tab.id}
+                        onClick={() => {
+                          onTabChange(tab.id);
+                          setIsMenuOpen(false);
+                        }}
+                        className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${
+                          isActive ? 'text-primary bg-primary/5 font-bold' : 'text-neutral-500 hover:bg-neutral-50'
+                        }`}
+                      >
+                        <Icon size={20} />
+                        <span className="text-sm font-medium">{tab.label}</span>
+                      </button>
+                    );
+                  })}
+                </motion.nav>
+              )}
+            </AnimatePresence>
+          </header>
+
+          {/* Main Content */}
+          <main className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+            {children}
+          </main>
+        </div>
+      </div>
+    );
+  }
+
+  // 學員 / 訪客：原本的頂部導覽列
   return (
     <div className="flex flex-col min-h-screen bg-neutral-50 relative overflow-x-hidden">
       {/* Top Header */}
@@ -60,7 +164,7 @@ export const Layout: React.FC<LayoutProps> = ({
                   <ChevronLeft size={24} className="text-neutral-900" />
                 </button>
               ) : (
-                <button 
+                <button
                   onClick={() => setIsMenuOpen(!isMenuOpen)}
                   className="p-2 bg-primary/10 rounded-xl lg:cursor-default transition-transform active:scale-95"
                 >
@@ -68,15 +172,14 @@ export const Layout: React.FC<LayoutProps> = ({
                     {isMenuOpen ? <X size={24} className="text-primary" /> : <Menu size={24} className="text-primary" />}
                   </div>
                   <div className="hidden lg:block">
-                    {userRole === 'admin' ? <LayoutDashboard size={24} className="text-primary" /> : <Home size={24} className="text-primary" />}
+                    <Home size={24} className="text-primary" />
                   </div>
                 </button>
               )}
               <div className="flex flex-col">
                 <h1 className="text-xl font-bold text-neutral-900 truncate">
-                  {userRole === 'admin' ? '管理後台' : title}
+                  {title}
                 </h1>
-                {userRole === 'admin' && <span className="text-[10px] font-bold text-primary uppercase tracking-widest">Admin</span>}
               </div>
             </div>
 
@@ -158,7 +261,7 @@ export const Layout: React.FC<LayoutProps> = ({
         {children}
       </main>
 
-      {/* Footer (Web version usually has a footer) */}
+      {/* Footer */}
       <footer className="bg-white border-t border-neutral-100 py-12 mt-auto">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex flex-col md:flex-row justify-between items-center gap-8">
