@@ -1331,6 +1331,7 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
   const [showAddModal, setShowAddModal] = useState(false);
   const [step, setStep] = useState(1);
   const [searchQuery, setSearchQuery] = useState('');
+  const [showArchived, setShowArchived] = useState(false);
 
   // Export attendance sheet
   const [showExportModal, setShowExportModal] = useState(false);
@@ -1372,7 +1373,11 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
 
   const fetchCourses = async () => {
     setLoading(true);
-    const { data } = await supabase.from('courses').select('*, coaches(name), venues(name, address)').order('name');
+    let query = supabase.from('courses').select('*, coaches(name), venues(name, address)').order('name');
+    if (!showArchived) {
+      query = query.eq('is_deleted', false);
+    }
+    const { data } = await query;
     if (data) {
       // 同時取得每個課程的 enrollment count
       const { data: enrollCounts } = await supabase
@@ -1403,6 +1408,9 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
         changeLogs: [],
         dates: [],
         attendance: {},
+        course_code: c.course_code || '',
+        is_deleted: c.is_deleted || false,
+        status: c.status || 'active',
       })));
     }
     setLoading(false);
@@ -1414,7 +1422,7 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
     fetchVenueContracts();
     fetchVenues();
     fetchCoursePlans();
-  }, []);
+  }, [showArchived]);
 
   const handleThumbnailUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -1454,7 +1462,7 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
       max_students: newCourseData.maxEnrollment || 24,
       price: newCourseData.price || 0,
       description: newCourseData.description || '',
-      status: '招生中',
+      status: newCourseData.courseStatus || 'active',
     };
     if (newCourseData.startTime) insertData.start_time = newCourseData.startTime;
     if (newCourseData.endTime) insertData.end_time = newCourseData.endTime;
@@ -1515,6 +1523,8 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
       price: course.price,
       description: course.description,
       maxEnrollment: course.maxEnrollment,
+      status: course.status || 'active',
+      course_code: course.course_code || '',
     });
     setEditTab('info');
     setShowEditModal(true);
@@ -1542,6 +1552,10 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
       updates.max_students = editForm.maxEnrollment;
       changes.push({ field: 'max_students', old_value: String(selectedCourse.maxEnrollment), new_value: String(editForm.maxEnrollment) });
     }
+    if (editForm.status !== (selectedCourse.status || 'active')) {
+      updates.status = editForm.status;
+      changes.push({ field: 'status', old_value: selectedCourse.status || 'active', new_value: editForm.status });
+    }
 
     if (Object.keys(updates).length > 0) {
       const { error } = await supabase.from('courses').update(updates).eq('id', selectedCourse.id);
@@ -1556,9 +1570,10 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
     setShowEditModal(false);
   };
 
-  const handleDeleteCourse = async (id: string) => {
-    if (confirm('確定要刪除此課程嗎？所有報名和出席紀錄也會一併刪除。')) {
-      const { error } = await supabase.from('courses').delete().eq('id', id);
+  const handleDeleteCourse = async (id: string, courseCode?: string) => {
+    const codeText = courseCode ? `（${courseCode}）` : '';
+    if (confirm(`確定要停用此課程${codeText}嗎？課程將標記為已結束。`)) {
+      const { error } = await supabase.from('courses').update({ is_deleted: true, status: 'archived' }).eq('id', id);
       if (!error) await fetchCourses();
     }
   };
@@ -1624,7 +1639,8 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
 
   const filteredCourses = courses.filter(c =>
     c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    c.location.toLowerCase().includes(searchQuery.toLowerCase())
+    c.location.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    (c.course_code || '').toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   // ============================================================
@@ -1661,7 +1677,7 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
 
     const { data: activeCourses } = await supabase
       .from('courses')
-      .select('id, name, day_of_week, start_time, end_time, coaches(name), venues(name)')
+      .select('id, name, course_code, day_of_week, start_time, end_time, coaches(name), venues(name)')
       .eq('is_active', true)
       .order('start_time')
 
@@ -1691,7 +1707,8 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
     for (const { course, students } of exportData) {
       const coachName = (course.coaches as any)?.name || '—'
       const venueName = (course.venues as any)?.name || '—'
-      text += `【${course.name}】\n`
+      const codeStr = course.course_code ? `[${course.course_code}] ` : ''
+      text += `【${codeStr}${course.name}】\n`
       text += `📅 ${course.day_of_week} ${course.start_time?.slice(0, 5)}-${course.end_time?.slice(0, 5)} | 📍 ${venueName} | 🏸 ${coachName}\n`
       text += '━━━━━━━━━━━━━━━━━━\n'
       students.forEach((s, i) => {
@@ -1714,7 +1731,7 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
 
   const handleExportCSV = () => {
     const { startStr, endStr } = getExportDateRange()
-    const header = '班級名稱,上課日,時間,場地,教練,學員編號,學員姓名,年齡,性別\n'
+    const header = '課程代碼,班級名稱,上課日,時間,場地,教練,學員編號,學員姓名,年齡,性別\n'
     const rows: string[] = []
     for (const { course, students } of exportData) {
       const coachName = (course.coaches as any)?.name || ''
@@ -1722,7 +1739,7 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
       const time = `${course.start_time?.slice(0, 5)}-${course.end_time?.slice(0, 5)}`
       for (const s of students) {
         rows.push([
-          course.name, course.day_of_week, time, venueName, coachName,
+          course.course_code || '', course.name, course.day_of_week, time, venueName, coachName,
           s.student_code || '', s.name, calculateAge(s.birth_date), s.gender || ''
         ].join(','))
       }
@@ -1764,14 +1781,18 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
       <div className="flex flex-col md:flex-row gap-4">
         <div className="relative flex-1">
           <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400" size={20} />
-          <Input placeholder="搜尋課程名稱、場地..." className="pl-12 h-14 bg-white border-neutral-100 shadow-sm rounded-2xl" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
+          <Input placeholder="搜尋課程代碼、名稱、場地..." className="pl-12 h-14 bg-white border-neutral-100 shadow-sm rounded-2xl" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
         </div>
-        <div className="flex gap-3">
+        <div className="flex gap-3 items-center">
           <Select className="h-14 bg-white border-neutral-100 shadow-sm rounded-2xl px-6 min-w-[140px]">
             <option>所有分類</option>
             <option>兒童班</option>
             <option>成人班</option>
           </Select>
+          <label className="flex items-center gap-2 px-4 py-2 rounded-xl bg-white border border-neutral-100 shadow-sm cursor-pointer select-none whitespace-nowrap">
+            <input type="checkbox" checked={showArchived} onChange={e => setShowArchived(e.target.checked)} className="w-4 h-4 rounded border-neutral-300 text-primary" />
+            <span className="text-sm font-medium text-neutral-600">顯示已停用課程</span>
+          </label>
         </div>
       </div>
 
@@ -1781,6 +1802,7 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
           <thead>
             <tr className="border-b border-neutral-50">
               <th className="px-8 py-6 text-xs font-bold text-neutral-400 uppercase tracking-wider">課程資訊</th>
+              <th className="px-8 py-6 text-xs font-bold text-neutral-400 uppercase tracking-wider">狀態</th>
               <th className="px-8 py-6 text-xs font-bold text-neutral-400 uppercase tracking-wider">時段與地點</th>
               <th className="px-8 py-6 text-xs font-bold text-neutral-400 uppercase tracking-wider">教練</th>
               <th className="px-8 py-6 text-xs font-bold text-neutral-400 uppercase tracking-wider">名額狀態</th>
@@ -1799,9 +1821,28 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
                           {course.category === 'children' ? '兒童班' : '成人班'}
                         </Badge>
                       </div>
-                      <h4 className="font-bold text-neutral-900 leading-tight">{course.name}</h4>
+                      <div className="flex items-center gap-2">
+                        <h4 className="font-bold text-neutral-900 leading-tight">{course.name}</h4>
+                        {course.course_code && (
+                          <span className="text-xs px-2 py-0.5 rounded-full bg-purple-50 text-purple-600 font-medium">{course.course_code}</span>
+                        )}
+                      </div>
                     </div>
                   </div>
+                </td>
+                <td className="px-8 py-6">
+                  {(() => {
+                    const statusMap: Record<string, { label: string; className: string }> = {
+                      active: { label: '招生中', className: 'bg-green-50 text-green-600' },
+                      full: { label: '額滿', className: 'bg-amber-50 text-amber-600' },
+                      suspended: { label: '暫停', className: 'bg-red-50 text-red-600' },
+                      archived: { label: '已結束', className: 'bg-neutral-100 text-neutral-500' },
+                    };
+                    const s = statusMap[course.status || 'active'] || statusMap.active;
+                    return (
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${s.className}`}>{s.label}</span>
+                    );
+                  })()}
                 </td>
                 <td className="px-8 py-6">
                   <div className="space-y-1">
@@ -1840,7 +1881,7 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
                     <button onClick={() => handleEditClick(course)} className="w-9 h-9 flex items-center justify-center rounded-xl bg-neutral-50 text-neutral-400 hover:bg-primary/10 hover:text-primary transition-colors">
                       <Edit2 size={16} />
                     </button>
-                    <button onClick={() => handleDeleteCourse(course.id)} className="w-9 h-9 flex items-center justify-center rounded-xl bg-neutral-50 text-neutral-400 hover:bg-danger/10 hover:text-danger transition-colors">
+                    <button onClick={() => handleDeleteCourse(course.id, course.course_code)} className="w-9 h-9 flex items-center justify-center rounded-xl bg-neutral-50 text-neutral-400 hover:bg-danger/10 hover:text-danger transition-colors">
                       <Trash2 size={16} />
                     </button>
                   </div>
@@ -1864,7 +1905,12 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
               <div className="px-10 py-8 border-b border-neutral-100">
                 <div className="flex items-center justify-between mb-6">
                   <div>
-                    <h2 className="text-2xl font-bold text-neutral-900">{selectedCourse.name}</h2>
+                    <div className="flex items-center gap-3">
+                      <h2 className="text-2xl font-bold text-neutral-900">{selectedCourse.name}</h2>
+                      {selectedCourse.course_code && (
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-purple-50 text-purple-600 font-medium">{selectedCourse.course_code}</span>
+                      )}
+                    </div>
                     <p className="text-sm text-neutral-500">{selectedCourse.schedule} {selectedCourse.time} · {selectedCourse.location}</p>
                   </div>
                   <button onClick={() => setShowEditModal(false)} className="w-10 h-10 rounded-full flex items-center justify-center hover:bg-neutral-100 transition-colors">
@@ -1906,6 +1952,14 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
                     {editTab === 'info' && (
                       <div className="grid grid-cols-2 gap-8">
                         <div className="space-y-6">
+                          {editForm.course_code && (
+                            <FormField label="課程代碼">
+                              <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-neutral-50 border border-neutral-200">
+                                <span className="text-xs px-2 py-0.5 rounded-full bg-purple-50 text-purple-600 font-medium">{editForm.course_code}</span>
+                                <span className="text-xs text-neutral-400">（系統自動產生，不可修改）</span>
+                              </div>
+                            </FormField>
+                          )}
                           <FormField label="課程名稱">
                             <Input value={editForm.name || ''} onChange={e => setEditForm({ ...editForm, name: e.target.value })} />
                           </FormField>
@@ -1917,6 +1971,13 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
                               <Input type="number" value={editForm.maxEnrollment || ''} onChange={e => setEditForm({ ...editForm, maxEnrollment: parseInt(e.target.value) || 24 })} />
                             </FormField>
                           </div>
+                          <FormField label="課程狀態">
+                            <Select value={editForm.status || 'active'} onChange={e => setEditForm({ ...editForm, status: e.target.value })}>
+                              <option value="active">招生中</option>
+                              <option value="full">額滿</option>
+                              <option value="suspended">暫停</option>
+                            </Select>
+                          </FormField>
                           <FormField label="課程說明">
                             <textarea
                               className="w-full min-h-[160px] p-4 rounded-2xl border border-neutral-300 focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all text-sm"
@@ -2159,6 +2220,7 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
                           <FormField label="開始時間"><Input type="time" value={newCourseData.startTime || ''} onChange={e => setNewCourseData((prev: any) => ({ ...prev, startTime: e.target.value }))} /></FormField>
                           <FormField label="結束時間"><Input type="time" value={newCourseData.endTime || ''} onChange={e => setNewCourseData((prev: any) => ({ ...prev, endTime: e.target.value }))} /></FormField>
                           <FormField label="單堂價格"><Input type="number" placeholder="0" value={newCourseData.price || ''} onChange={e => setNewCourseData({ ...newCourseData, price: parseInt(e.target.value) || 0 })} /></FormField>
+                          <FormField label="課程狀態"><Select value={newCourseData.courseStatus || 'active'} onChange={e => setNewCourseData({ ...newCourseData, courseStatus: e.target.value })}><option value="active">招生中</option><option value="full">額滿</option><option value="suspended">暫停</option></Select></FormField>
                         </div>
                         <FormField label="課程說明"><textarea className="w-full min-h-[120px] p-4 rounded-2xl border border-neutral-300 focus:border-primary focus:ring-1 focus:ring-primary outline-none text-sm" value={newCourseData.description || ''} onChange={e => setNewCourseData({ ...newCourseData, description: e.target.value })} /></FormField>
                         <FormField label="課程封面圖">
