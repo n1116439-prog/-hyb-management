@@ -22,7 +22,7 @@ import { BottomSheet } from './components/BottomSheet';
 import { Session, WaitlistEntry, Course, VenueContract } from './types';
 import { supabase } from './lib/supabase';
 import { validateName, validateEmail, validatePassword, validatePhone, validateBirthDate } from './lib/validators';
-import { getLineLoginUrl, exchangeLineToken, getLineProfile } from './lib/lineLogin';
+import { getLineLoginUrl, exchangeLineToken, getLineProfile, getSavedLineState, clearLineState } from './lib/lineLogin';
 
 /* ── iOS-style wheel column ── */
 const ITEM_HEIGHT = 40
@@ -249,7 +249,7 @@ export default function App() {
       const params = new URLSearchParams(window.location.search);
       const code = params.get('code');
       const state = params.get('state');
-      const savedState = localStorage.getItem('line_state');
+      const savedState = getSavedLineState();
 
       if (!code || !state) return;
 
@@ -257,9 +257,9 @@ export default function App() {
       window.history.replaceState({}, '', window.location.pathname);
 
       if (state !== savedState) {
-        console.warn('LINE state mismatch, proceeding anyway (mobile browser context switch)');
+        console.warn('LINE state mismatch — 可能是手機跨瀏覽器導致，繼續登入流程');
       }
-      localStorage.removeItem('line_state');
+      clearLineState();
 
       try {
         const { access_token } = await exchangeLineToken(code);
@@ -276,13 +276,18 @@ export default function App() {
           setUserEmail(profile.displayName + ' (LINE)');
           const categories = linkedStudents.map(s => s.category);
           setUserCategory(categories.includes('adult') ? 'adult' : 'child');
-          localStorage.setItem('line_user', JSON.stringify(profile));
+          try { localStorage.setItem('line_user', JSON.stringify(profile)) } catch(e) {}
+
+          // LINE 內建瀏覽器提示
+          if (/Line/i.test(navigator.userAgent)) {
+            console.log('LINE 內建瀏覽器登入成功');
+          }
         } else {
           setShowLineBindModal(true);
         }
       } catch (err) {
         console.error('LINE login error:', err);
-        alert('LINE 登入失敗，請稍後再試');
+        alert('LINE 登入失敗，請重試。如持續失敗請使用 Email 登入。');
       }
     };
 
@@ -875,7 +880,7 @@ export default function App() {
       setUserCategory(myStudents.some(s => s.category === 'adult') ? 'adult' : 'child');
     }
 
-    localStorage.setItem('line_user', JSON.stringify(lineProfile));
+    try { localStorage.setItem('line_user', JSON.stringify(lineProfile)) } catch(e) {}
     alert('LINE 帳號綁定成功！下次可直接用 LINE 登入');
   };
 
@@ -886,7 +891,7 @@ export default function App() {
       await supabase.from('user_roles').update({ otp_verified: false }).eq('user_id', user.id);
     }
     await supabase.auth.signOut();
-    localStorage.removeItem('line_user');
+    try { localStorage.removeItem('line_user') } catch(e) {}
     sessionStorage.removeItem('admin_verified');
     setLineProfile(null);
     setUserRole('user');
@@ -1410,7 +1415,7 @@ export default function App() {
                     <div className="flex-1 h-px bg-neutral-200" />
                   </div>
                   <button
-                    onClick={() => { setIsLoginOpen(false); window.location.href = getLineLoginUrl(); }}
+                    onClick={() => { clearLineState(); setIsLoginOpen(false); window.location.href = getLineLoginUrl(); }}
                     className="w-full flex items-center justify-center gap-2 py-3 rounded-xl font-semibold text-sm transition-all hover:opacity-90"
                     style={{ backgroundColor: '#06C755', color: 'white' }}
                   >
@@ -1530,7 +1535,7 @@ export default function App() {
                 <div className="flex-1 h-px bg-neutral-200" />
               </div>
               <button
-                onClick={() => { setIsRegisterOpen(false); window.location.href = getLineLoginUrl(); }}
+                onClick={() => { clearLineState(); setIsRegisterOpen(false); window.location.href = getLineLoginUrl(); }}
                 className="w-full flex items-center justify-center gap-2 py-3 rounded-xl font-semibold text-sm transition-all hover:opacity-90"
                 style={{ backgroundColor: '#06C755', color: 'white' }}
               >

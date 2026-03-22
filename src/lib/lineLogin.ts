@@ -2,10 +2,13 @@ const LINE_CLIENT_ID = import.meta.env.VITE_LINE_CLIENT_ID || ''
 const LINE_CLIENT_SECRET = import.meta.env.VITE_LINE_CLIENT_SECRET || ''
 const LINE_CALLBACK_URL = import.meta.env.VITE_LINE_CALLBACK_URL || ''
 
-// 產生 LINE 授權 URL
+// 多重存儲 state（確保跨瀏覽器可用）
 export function getLineLoginUrl(): string {
   const state = crypto.randomUUID()
-  localStorage.setItem('line_state', state)
+  try { localStorage.setItem('line_state', state) } catch(e) {}
+  try { sessionStorage.setItem('line_state', state) } catch(e) {}
+  document.cookie = 'line_state=' + state + ';path=/;max-age=600;SameSite=Lax'
+
   const params = new URLSearchParams({
     response_type: 'code',
     client_id: LINE_CLIENT_ID,
@@ -14,6 +17,25 @@ export function getLineLoginUrl(): string {
     scope: 'profile openid',
   })
   return 'https://access.line.me/oauth2/v2.1/authorize?' + params.toString()
+}
+
+// 依序嘗試讀取 state：localStorage → sessionStorage → cookie
+export function getSavedLineState(): string | null {
+  let state: string | null = null
+  try { state = localStorage.getItem('line_state') } catch(e) {}
+  if (!state) try { state = sessionStorage.getItem('line_state') } catch(e) {}
+  if (!state) {
+    const match = document.cookie.match(/line_state=([^;]+)/)
+    if (match) state = match[1]
+  }
+  return state
+}
+
+// 清除所有存儲的 state
+export function clearLineState(): void {
+  try { localStorage.removeItem('line_state') } catch(e) {}
+  try { sessionStorage.removeItem('line_state') } catch(e) {}
+  document.cookie = 'line_state=;path=/;max-age=0'
 }
 
 // 用 code 換 token
