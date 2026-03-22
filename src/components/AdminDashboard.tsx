@@ -94,7 +94,7 @@ export const AdminDashboard: React.FC = () => {
     setMonthlyClasses(uniqueClasses.size)
 
     // Active courses
-    const { count: cCount } = await supabase.from('courses').select('id', { count: 'exact', head: true }).eq('is_active', true).neq('is_deleted', true)
+    const { count: cCount } = await supabase.from('courses').select('id', { count: 'exact', head: true }).eq('is_active', true).or('is_deleted.is.null,is_deleted.eq.false')
     setActiveCourses(cCount || 0)
 
     // Expiring credits (within 14 days)
@@ -120,7 +120,7 @@ export const AdminDashboard: React.FC = () => {
 
   const fetchTodayCourses = async () => {
     const { data } = await supabase.from('courses').select('*, coaches(name), venues(name)')
-      .eq('day_of_week', todayWeekday).eq('is_active', true).neq('is_deleted', true).order('start_time')
+      .eq('day_of_week', todayWeekday).eq('is_active', true).or('is_deleted.is.null,is_deleted.eq.false').order('start_time')
 
     // Get enrollment counts
     const courseIds = (data || []).map(c => c.id)
@@ -134,7 +134,7 @@ export const AdminDashboard: React.FC = () => {
 
   const fetchWeekCourses = async () => {
     const { data } = await supabase.from('courses').select('*, coaches(name), venues(name)')
-      .eq('is_active', true).neq('is_deleted', true).order('start_time')
+      .eq('is_active', true).or('is_deleted.is.null,is_deleted.eq.false').order('start_time')
     setWeekCourses(data || [])
   }
 

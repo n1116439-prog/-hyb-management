@@ -408,7 +408,7 @@ export default function App() {
     const { data: coursesData } = await supabase
       .from('courses')
       .select('*, coaches(name), venues(name, address)')
-      .neq('is_deleted', true)
+      .or('is_deleted.is.null,is_deleted.eq.false')
       .order('name')
 
     // 從 enrollments 表計算每門課的實際報名人數

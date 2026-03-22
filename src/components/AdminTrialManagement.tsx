@@ -48,7 +48,7 @@ export const AdminTrialManagement: React.FC<{ courses?: any[] }> = ({ courses: p
       setAllCourses(propCourses)
       return
     }
-    const { data } = await supabase.from('courses').select('id, name, course_code, day_of_week, start_time, end_time').neq('is_deleted', true).order('name')
+    const { data } = await supabase.from('courses').select('id, name, course_code, day_of_week, start_time, end_time').or('is_deleted.is.null,is_deleted.eq.false').order('name')
     setAllCourses(data || [])
   }
 

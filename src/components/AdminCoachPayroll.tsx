@@ -120,7 +120,7 @@ export const AdminCoachPayroll: React.FC = () => {
         .from('courses')
         .select('id, day_of_week, course_code')
         .eq('coach_id', coach.id)
-        .neq('is_deleted', true)
+        .or('is_deleted.is.null,is_deleted.eq.false')
 
       if (!courses || courses.length === 0) continue
 
@@ -248,7 +248,7 @@ export const AdminCoachPayroll: React.FC = () => {
       .from('courses')
       .select('id, name, course_code, day_of_week, start_time, end_time, venues(name)')
       .eq('coach_id', coachId)
-      .neq('is_deleted', true)
+      .or('is_deleted.is.null,is_deleted.eq.false')
 
     const { data: holidays } = await supabase
       .from('course_holidays')
