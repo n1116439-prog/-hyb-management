@@ -1375,7 +1375,7 @@ export const AdminCourseManagement: React.FC<AdminCourseManagementProps> = ({ co
     setLoading(true);
     let query = supabase.from('courses').select('*, coaches(name), venues(name, address)').order('name');
     if (!showArchived) {
-      query = query.eq('is_deleted', false);
+      query = query.neq('is_deleted', true);
     }
     const { data } = await query;
     if (data) {

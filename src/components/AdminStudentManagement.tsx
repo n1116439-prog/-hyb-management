@@ -221,7 +221,7 @@ export const AdminStudentManagement: React.FC<{
   }
 
   const fetchAllCourses = async () => {
-    const { data } = await supabase.from('courses').select('id, name, course_code, category, day_of_week, start_time, end_time, venue_id, venues(name)').eq('is_deleted', false)
+    const { data } = await supabase.from('courses').select('id, name, course_code, category, day_of_week, start_time, end_time, venue_id, venues(name)').neq('is_deleted', true)
     if (data) setAllCourses(data)
   }
 
