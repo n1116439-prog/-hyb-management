@@ -1075,16 +1075,25 @@ export default function App() {
                 if (forceChangeForm.password.length < 6) { alert('密碼至少 6 位'); return; }
                 if (forceChangeForm.password !== forceChangeForm.confirm) { alert('兩次密碼不一致'); return; }
                 setForceChangeSaving(true);
-                const { error } = await supabase.auth.updateUser({ password: forceChangeForm.password });
-                if (error) { alert('更新失敗：' + error.message); setForceChangeSaving(false); return; }
-                const { data: { user } } = await supabase.auth.getUser();
-                if (user) {
-                  await supabase.from('students').update({ force_password_change: false }).eq('parent_uid', user.id);
+                try {
+                  console.log('開始更新密碼...');
+                  const { error } = await supabase.auth.updateUser({ password: forceChangeForm.password });
+                  console.log('updateUser 結果:', error);
+                  if (error) { alert('更新失敗：' + error.message); setForceChangeSaving(false); return; }
+                  const { data: { user } } = await supabase.auth.getUser();
+                  console.log('getUser:', user?.id);
+                  if (user) {
+                    await supabase.from('students').update({ force_password_change: false }).eq('parent_uid', user.id);
+                  }
+                  setForceChangeSaving(false);
+                  setShowForcePasswordChange(false);
+                  setForceChangeForm({ password: '', confirm: '' });
+                  alert('密碼已更新！');
+                } catch (err) {
+                  console.error('強制改密碼錯誤:', err);
+                  alert('更新過程發生錯誤');
+                  setForceChangeSaving(false);
                 }
-                setForceChangeSaving(false);
-                setShowForcePasswordChange(false);
-                setForceChangeForm({ password: '', confirm: '' });
-                alert('密碼已更新！');
               }}
             >
               確認更改
