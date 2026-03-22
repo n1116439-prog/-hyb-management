@@ -85,9 +85,9 @@ export const Layout: React.FC<LayoutProps> = ({
             </div>
           </div>
 
-          <div className="flex flex-col lg:flex-row items-stretch lg:items-center lg:gap-4 w-full lg:w-auto">
+          <div className="flex flex-col lg:flex-row items-stretch lg:items-center lg:gap-0 flex-1 min-w-0">
             {/* Desktop Navigation */}
-            <nav className="hidden lg:flex items-center gap-1 flex-nowrap overflow-x-auto flex-shrink min-w-0">
+            <nav className="hidden lg:flex items-center gap-1 flex-nowrap overflow-x-auto min-w-0 flex-1 scrollbar-hide">
               {tabs.map((tab) => {
                 const isActive = activeTab === tab.id;
                 const Icon = tab.icon;
@@ -95,14 +95,14 @@ export const Layout: React.FC<LayoutProps> = ({
                   <button
                     key={tab.id}
                     onClick={() => onTabChange(tab.id)}
-                    className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-sm font-bold transition-all relative whitespace-nowrap ${
+                    className={`flex items-center gap-2 px-3 py-2.5 rounded-2xl text-sm font-bold transition-all relative whitespace-nowrap ${
                       isActive ? 'text-primary bg-primary/5' : 'text-neutral-500 hover:bg-neutral-50'
                     }`}
                   >
                     <Icon size={18} />
                     <span>{tab.label}</span>
                     {isActive && (
-                      <motion.div 
+                      <motion.div
                         layoutId="activeTabIndicator"
                         className="absolute -bottom-[26px] left-0 right-0 h-1 bg-primary rounded-t-full"
                       />
@@ -115,7 +115,7 @@ export const Layout: React.FC<LayoutProps> = ({
             {/* Mobile Navigation - Expanded List */}
             <AnimatePresence>
               {isMenuOpen && (
-                <motion.nav 
+                <motion.nav
                   initial={{ height: 0, opacity: 0 }}
                   animate={{ height: 'auto', opacity: 1 }}
                   exit={{ height: 0, opacity: 0 }}
@@ -143,7 +143,7 @@ export const Layout: React.FC<LayoutProps> = ({
                 </motion.nav>
               )}
             </AnimatePresence>
-            
+
             <div className="h-8 w-px bg-neutral-100 mx-2 hidden lg:block flex-shrink-0" />
 
             <div className="hidden lg:flex items-center gap-3 flex-shrink-0">
