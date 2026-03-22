@@ -508,41 +508,47 @@ export default function App() {
       if (code.length !== 6) return;
 
       setIsSendingCode(true);
-      const { data: otpData } = await supabase
-        .from('user_roles')
-        .select('otp_code, otp_expires_at')
-        .eq('user_id', pendingAdminUserId)
-        .single();
+      try {
+        const { data: otpData } = await supabase
+          .from('user_roles')
+          .select('otp_code, otp_expires_at')
+          .eq('user_id', pendingAdminUserId)
+          .single();
 
-      if (!otpData || otpData.otp_code !== code) {
-        alert('驗證碼錯誤，請重新輸入');
+        if (!otpData || otpData.otp_code !== code) {
+          alert('驗證碼錯誤，請重新輸入');
+          setOtpCode(['', '', '', '', '', '']);
+          setIsSendingCode(false);
+          return;
+        }
+
+        if (otpData.otp_expires_at && new Date(otpData.otp_expires_at) < new Date()) {
+          alert('驗證碼已過期，請重新發送');
+          setOtpCode(['', '', '', '', '', '']);
+          setIsSendingCode(false);
+          return;
+        }
+
+        // OTP 驗證通過，清除 OTP
+        await supabase.from('user_roles').update({ otp_code: null, otp_expires_at: null, otp_verified: true }).eq('user_id', pendingAdminUserId);
+
+        sessionStorage.setItem('admin_verified', pendingAdminEmail);
+        setUserRole('admin');
+        setIsAdminLoggedIn(true);
+        setActiveTab('admin-dashboard');
+        setUserEmail(pendingAdminEmail);
+        setIsLoginOpen(false);
+        setLoginData({ account: '', password: '' });
+        setLoginStep(1);
         setOtpCode(['', '', '', '', '', '']);
+        setPendingAdminEmail('');
+        setPendingAdminUserId('');
         setIsSendingCode(false);
-        return;
-      }
-
-      if (otpData.otp_expires_at && new Date(otpData.otp_expires_at) < new Date()) {
-        alert('驗證碼已過期，請重新發送');
-        setOtpCode(['', '', '', '', '', '']);
+      } catch (err) {
+        console.error('OTP 驗證錯誤:', err);
+        alert('驗證過程發生錯誤');
         setIsSendingCode(false);
-        return;
       }
-
-      // OTP 驗證通過，清除 OTP
-      await supabase.from('user_roles').update({ otp_code: null, otp_expires_at: null, otp_verified: true }).eq('user_id', pendingAdminUserId);
-
-      sessionStorage.setItem('admin_verified', pendingAdminEmail);
-      setUserRole('admin');
-      setIsAdminLoggedIn(true);
-      setActiveTab('admin-dashboard');
-      setUserEmail(pendingAdminEmail);
-      setIsLoginOpen(false);
-      setLoginData({ account: '', password: '' });
-      setLoginStep(1);
-      setOtpCode(['', '', '', '', '', '']);
-      setPendingAdminEmail('');
-      setPendingAdminUserId('');
-      setIsSendingCode(false);
       return;
     }
 
@@ -581,7 +587,8 @@ export default function App() {
 
       if (roleData) {
         if (roleData.requires_otp === false) {
-          // 不需要 OTP → 直接進入管理員
+          // 不需要 OTP → 直接進入管理員，同時設 otp_verified 讓 checkSession 能恢復
+          await supabase.from('user_roles').update({ otp_verified: true }).eq('user_id', data.user.id);
           sessionStorage.setItem('admin_verified', loginData.account);
           setUserRole('admin');
           setIsAdminLoggedIn(true);
